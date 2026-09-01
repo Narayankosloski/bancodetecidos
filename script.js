@@ -100,6 +100,12 @@
 
   // ---------- Autenticação ----------
 
+  auth.getRedirectResult().catch(function (err) {
+    console.error('Erro no login via redirect', err);
+    var root = document.getElementById('ct-root');
+    if (root) root.innerHTML = '<p class="ct-error" style="text-align:center">Não foi possível entrar (' + esc(err.code || err.message) + '). Tente novamente.</p>';
+  });
+
   function renderAuthBar() {
     var bar = document.getElementById('ct-authbar');
     if (!bar) return;
@@ -130,7 +136,7 @@
     var btn = document.getElementById('ct-google-login');
     if (btn) btn.addEventListener('click', function () {
       var provider = new firebase.auth.GoogleAuthProvider();
-      auth.signInWithPopup(provider).catch(function (err) {
+      auth.signInWithRedirect(provider).catch(function (err) {
         console.error(err);
         var root2 = document.getElementById('ct-root');
         if (root2) root2.innerHTML += '<p class="ct-error" style="text-align:center">Não foi possível entrar (' + esc(err.code || err.message) + '). Tente novamente.</p>';
