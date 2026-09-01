@@ -87,3 +87,22 @@ body {
 .ct-login-box p { color: var(--ink-soft); font-size: 14px; margin: 0 0 18px; }
 .ct-google-btn { display: inline-flex; align-items: center; gap: 10px; padding: 10px 18px; border-radius: 8px; border: 1px solid var(--line); background: #fff; color: var(--ink); font-size: 14px; font-weight: 500; cursor: pointer; font-family: 'Work Sans', sans-serif; }
 .ct-google-btn:hover { border-color: var(--ink-soft); }
+
+.ct-tabs { display: flex; gap: 4px; margin-bottom: 18px; border-bottom: 1px solid var(--line); }
+.ct-tab { padding: 8px 4px; margin-right: 18px; font-size: 14px; font-weight: 500; color: var(--ink-soft); cursor: pointer; border-bottom: 2px solid transparent; }
+.ct-tab.active { color: var(--ink); border-bottom-color: var(--thread); }
+
+.ct-check-list { display: flex; flex-direction: column; gap: 6px; max-height: 220px; overflow-y: auto; border: 1px solid var(--line); border-radius: 7px; padding: 10px; background: #fff; }
+.ct-check-row { display: flex; align-items: center; gap: 8px; font-size: 13.5px; color: var(--ink); cursor: pointer; }
+.ct-check-stock { color: var(--ink-soft); font-size: 12px; margin-left: 2px; }
+
+.ct-roupa-card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px; }
+.ct-roupa-tecido-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 0; border-top: 1px solid var(--line); }
+.ct-roupa-tecido-row:first-of-type { border-top: none; }
+.ct-roupa-tecido-name { font-size: 13.5px; display: flex; flex-direction: column; }
+.ct-roupa-tecido-name small { color: var(--ink-soft); font-size: 11px; font-weight: 400; }
+.ct-consumo-input { width: 84px; padding: 7px 8px; border: 1px solid var(--line); border-radius: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 13px; text-align: right; }
+.ct-consumo-input:focus { outline: none; border-color: var(--thread); }
+
+.ct-historico { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line); }
+.ct-historico-row { display: flex; justify-content: space-between; font-size: 12px; color: var(--ink-soft); padding: 3px 0; }

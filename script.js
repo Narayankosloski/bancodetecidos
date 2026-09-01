@@ -34,14 +34,28 @@
     showOptional: false,
     addingCategory: false,
     newCategoryDraft: '',
-    draft: null
+    draft: null,
+    dataError: null,
+
+    activeTab: 'tecidos',
+
+    roupas: [],
+    roupasLoaded: false,
+    roupaFormOpen: false,
+    roupaEditingId: null,
+    roupaDraft: null,
+    consumoDraft: {},
+    historicoOpen: {},
+    historicoCache: {}
   };
 
   var currentUser = null;
   var userRef = null;
   var itemsRef = null;
+  var roupasRef = null;
   var unsubUser = null;
   var unsubItems = null;
+  var unsubRoupas = null;
 
   function catColor(cat) {
     var idx = 0;
@@ -64,6 +78,18 @@
     var n = toNumber(v);
     if (isNaN(n)) return '';
     return 'R$ ' + n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
+  // Converte um número de volta para o formato de exibição (vírgula decimal),
+  // arredondando para evitar sobras de ponto flutuante (ex: 20 - 1.5 = 18.5).
+  function toStoredQty(n) {
+    var rounded = Math.round(n * 1000) / 1000;
+    return String(rounded).replace('.', ',');
+  }
+
+  function fmtData(ts) {
+    if (!ts || !ts.toDate) return '';
+    return ts.toDate().toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
   }
 
   // ---------- Autenticação ----------
@@ -110,32 +136,66 @@
     currentUser = user;
     if (unsubUser) { unsubUser(); unsubUser = null; }
     if (unsubItems) { unsubItems(); unsubItems = null; }
+    if (unsubRoupas) { unsubRoupas(); unsubRoupas = null; }
     renderAuthBar();
 
     if (user) {
       state.loaded = false;
+      state.roupasLoaded = false;
+      state.dataError = null;
       userRef = db.collection('usuarios').doc(user.uid);
       itemsRef = userRef.collection('itens');
+      roupasRef = userRef.collection('roupas');
 
       unsubUser = userRef.onSnapshot(function (doc) {
         state.categories = (doc.exists && doc.data().categorias) || [];
         state.loaded = true;
+        state.dataError = null;
         render();
-      }, function (err) { console.error('Erro ao ler categorias', err); });
+      }, function (err) {
+        console.error('Erro ao ler categorias', err);
+        state.loaded = true;
+        state.dataError = err.code || err.message;
+        render();
+      });
 
       unsubItems = itemsRef.orderBy('criadoEm', 'desc').onSnapshot(function (snap) {
         state.items = snap.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); });
         state.loaded = true;
+        state.dataError = null;
         render();
-      }, function (err) { console.error('Erro ao ler itens', err); });
+      }, function (err) {
+        console.error('Erro ao ler itens', err);
+        state.loaded = true;
+        state.dataError = err.code || err.message;
+        render();
+      });
+
+      unsubRoupas = roupasRef.orderBy('criadoEm', 'desc').onSnapshot(function (snap) {
+        state.roupas = snap.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); });
+        state.roupasLoaded = true;
+        state.dataError = null;
+        render();
+      }, function (err) {
+        console.error('Erro ao ler roupas', err);
+        state.roupasLoaded = true;
+        state.dataError = err.code || err.message;
+        render();
+      });
     } else {
       userRef = null;
       itemsRef = null;
+      roupasRef = null;
       state.items = [];
       state.categories = [];
+      state.roupas = [];
       state.formOpen = false;
       state.draft = null;
+      state.roupaFormOpen = false;
+      state.roupaDraft = null;
+      state.consumoDraft = {};
       state.loaded = true;
+      state.roupasLoaded = true;
       renderLoginScreen();
     }
   });
@@ -240,17 +300,23 @@
       promise = itemsRef.add(payload);
     }
 
+    errEl.textContent = 'Salvando...';
+    var submitBtn = document.getElementById('ct-submit-form');
+    if (submitBtn) submitBtn.disabled = true;
+
     promise.then(function () {
       if (isNewCategory) saveCategories();
+      state.formOpen = false;
+      state.editingId = null;
+      state.draft = null;
+      render();
     }).catch(function (e) {
       console.error('Erro ao salvar item', e);
-      errEl.textContent = 'Não foi possível salvar. Tente novamente.';
+      var errEl2 = document.getElementById('ct-form-error');
+      if (errEl2) errEl2.textContent = 'Não foi possível salvar (' + (e.code || e.message) + '). Confira se as regras do Firestore foram publicadas.';
+      var submitBtn2 = document.getElementById('ct-submit-form');
+      if (submitBtn2) submitBtn2.disabled = false;
     });
-
-    state.formOpen = false;
-    state.editingId = null;
-    state.draft = null;
-    render();
   }
 
   function confirmNewCategory() {
@@ -265,6 +331,183 @@
     state.newCategoryDraft = '';
     state.draft.categoria = name;
     render();
+  }
+
+  // ---------- Roupas: rascunho do formulário ----------
+
+  function syncRoupaDraftFromDOM() {
+    if (!state.roupaFormOpen || !state.roupaDraft) return;
+    var nomeEl = document.getElementById('ct-r-nome');
+    if (nomeEl) state.roupaDraft.nome = nomeEl.value;
+    var checks = document.querySelectorAll('.ct-r-tecido-check');
+    if (checks.length) {
+      var arr = [];
+      checks.forEach(function (c) { if (c.checked) arr.push(c.value); });
+      state.roupaDraft.tecidosVinculados = arr;
+    }
+  }
+
+  function openNewRoupaForm() {
+    state.roupaFormOpen = true;
+    state.roupaEditingId = null;
+    state.roupaDraft = { nome: '', tecidosVinculados: [] };
+    render();
+    setTimeout(function () {
+      var el = document.getElementById('ct-r-nome');
+      if (el) el.focus();
+    }, 0);
+  }
+
+  function openEditRoupaForm(id) {
+    var r = state.roupas.find(function (x) { return x.id === id; });
+    if (!r) return;
+    state.roupaFormOpen = true;
+    state.roupaEditingId = id;
+    state.roupaDraft = { nome: r.nome, tecidosVinculados: (r.tecidosVinculados || []).slice() };
+    render();
+  }
+
+  function closeRoupaForm() {
+    state.roupaFormOpen = false;
+    state.roupaEditingId = null;
+    state.roupaDraft = null;
+    render();
+  }
+
+  function deleteRoupa(id) {
+    if (!roupasRef) return;
+    roupasRef.doc(id).delete().catch(function (e) { console.error('Erro ao excluir roupa', e); });
+  }
+
+  function submitRoupaForm() {
+    syncRoupaDraftFromDOM();
+    var v = state.roupaDraft;
+    var errEl = document.getElementById('ct-roupa-form-error');
+    if (!v.nome || !v.nome.trim()) { errEl.textContent = 'Informe o nome da roupa.'; return; }
+    if (!v.tecidosVinculados || v.tecidosVinculados.length === 0) { errEl.textContent = 'Selecione ao menos um tecido.'; return; }
+    errEl.textContent = '';
+    if (!roupasRef) return;
+
+    var payload = { nome: v.nome.trim(), tecidosVinculados: v.tecidosVinculados };
+    var promise;
+    if (state.roupaEditingId) {
+      promise = roupasRef.doc(state.roupaEditingId).set(payload, { merge: true });
+    } else {
+      payload.criadoEm = firebase.firestore.FieldValue.serverTimestamp();
+      promise = roupasRef.add(payload);
+    }
+
+    errEl.textContent = 'Salvando...';
+    var submitBtn = document.getElementById('ct-roupa-submit-form');
+    if (submitBtn) submitBtn.disabled = true;
+
+    promise.then(function () {
+      state.roupaFormOpen = false;
+      state.roupaEditingId = null;
+      state.roupaDraft = null;
+      render();
+    }).catch(function (e) {
+      console.error('Erro ao salvar roupa', e);
+      var errEl2 = document.getElementById('ct-roupa-form-error');
+      if (errEl2) errEl2.textContent = 'Não foi possível salvar (' + (e.code || e.message) + ').';
+      var submitBtn2 = document.getElementById('ct-roupa-submit-form');
+      if (submitBtn2) submitBtn2.disabled = false;
+    });
+  }
+
+  // ---------- Consumo de tecido pelas roupas ----------
+
+  function syncConsumoDraftFromDOM() {
+    document.querySelectorAll('.ct-consumo-input').forEach(function (el) {
+      var key = el.getAttribute('data-key');
+      if (key) state.consumoDraft[key] = el.value;
+    });
+  }
+
+  function registrarConsumo(roupaId) {
+    syncConsumoDraftFromDOM();
+    var roupa = state.roupas.find(function (r) { return r.id === roupaId; });
+    var errEl = document.getElementById('ct-roupa-error-' + roupaId);
+    if (!roupa || !itemsRef || !roupasRef) return;
+
+    var usages = [];
+    var invalido = false;
+    (roupa.tecidosVinculados || []).forEach(function (tecidoId) {
+      var tecido = state.items.find(function (it) { return it.id === tecidoId; });
+      if (!tecido) return; // tecido removido do estoque, ignora
+      var raw = state.consumoDraft[roupaId + ':' + tecidoId];
+      if (raw === undefined || raw === '' || raw === null) return;
+      var qty = toNumber(raw);
+      if (isNaN(qty) || qty < 0) { invalido = true; return; }
+      if (qty > 0) usages.push({ tecidoId: tecidoId, tecidoNome: tecido.nome, qty: qty });
+    });
+
+    if (invalido) { if (errEl) errEl.textContent = 'Informe valores válidos (0 ou mais).'; return; }
+    if (usages.length === 0) { if (errEl) errEl.textContent = 'Informe ao menos uma quantidade utilizada.'; return; }
+
+    if (errEl) errEl.textContent = 'Registrando...';
+
+    var roupaRef = roupasRef.doc(roupaId);
+
+    db.runTransaction(function (tx) {
+      var reads = usages.map(function (u) {
+        return tx.get(itemsRef.doc(u.tecidoId)).then(function (doc) {
+          if (!doc.exists) throw { message: 'O tecido "' + u.tecidoNome + '" não existe mais no estoque.' };
+          var estoqueAtual = toNumber(doc.data().quantidade);
+          if (isNaN(estoqueAtual)) estoqueAtual = 0;
+          if (u.qty > estoqueAtual) {
+            throw { message: 'Estoque insuficiente de "' + u.tecidoNome + '" (disponível: ' + doc.data().quantidade + ').' };
+          }
+          return { ref: itemsRef.doc(u.tecidoId), novoEstoque: estoqueAtual - u.qty, u: u };
+        });
+      });
+      return Promise.all(reads).then(function (results) {
+        results.forEach(function (r) {
+          tx.update(r.ref, { quantidade: toStoredQty(r.novoEstoque) });
+          var consumoRef = roupaRef.collection('consumos').doc();
+          tx.set(consumoRef, {
+            tecidoId: r.u.tecidoId,
+            tecidoNome: r.u.tecidoNome,
+            quantidade: toStoredQty(r.u.qty),
+            data: firebase.firestore.FieldValue.serverTimestamp()
+          });
+        });
+      });
+    }).then(function () {
+      usages.forEach(function (u) { delete state.consumoDraft[roupaId + ':' + u.tecidoId]; });
+      if (state.historicoOpen[roupaId]) fetchHistorico(roupaId);
+      var errEl2 = document.getElementById('ct-roupa-error-' + roupaId);
+      if (errEl2) errEl2.textContent = '';
+      render();
+    }).catch(function (e) {
+      console.error('Erro ao registrar consumo', e);
+      var errEl2 = document.getElementById('ct-roupa-error-' + roupaId);
+      if (errEl2) errEl2.textContent = e.message || 'Não foi possível registrar o consumo.';
+    });
+  }
+
+  function fetchHistorico(roupaId) {
+    if (!roupasRef) return;
+    roupasRef.doc(roupaId).collection('consumos').orderBy('data', 'desc').limit(20).get().then(function (snap) {
+      state.historicoCache[roupaId] = snap.docs.map(function (d) { return d.data(); });
+      render();
+    }).catch(function (e) {
+      console.error('Erro ao buscar histórico', e);
+      state.historicoCache[roupaId] = [];
+      render();
+    });
+  }
+
+  function toggleHistorico(roupaId) {
+    var isOpen = !!state.historicoOpen[roupaId];
+    if (isOpen) {
+      state.historicoOpen[roupaId] = false;
+      render();
+    } else {
+      state.historicoOpen[roupaId] = true;
+      render();
+      fetchHistorico(roupaId);
+    }
   }
 
   // ---------- Render ----------
@@ -360,13 +603,14 @@
     return html;
   }
 
-  function render() {
-    if (!currentUser) return;
-    syncDraftFromDOM();
+  function renderTabs() {
+    return '<div class="ct-tabs">' +
+      '<div class="ct-tab' + (state.activeTab === 'tecidos' ? ' active' : '') + '" data-tab="tecidos">Tecidos</div>' +
+      '<div class="ct-tab' + (state.activeTab === 'roupas' ? ' active' : '') + '" data-tab="roupas">Roupas</div>' +
+      '</div>';
+  }
 
-    var root = document.getElementById('ct-root');
-    if (!state.loaded) { root.innerHTML = '<div class="ct-loading">Carregando catálogo...</div>'; return; }
-
+  function renderTecidosTab() {
     var items = filteredItems();
     var html = '';
     html += '<div class="ct-toolbar">' +
@@ -383,10 +627,118 @@
     }
 
     if (state.formOpen) html += renderForm();
+    return html;
+  }
+
+  function renderRoupaForm() {
+    var v = state.roupaDraft || { nome: '', tecidosVinculados: [] };
+    var checkboxes = state.items.length === 0
+      ? '<p style="font-size:13px;color:var(--ink-soft)">Cadastre tecidos na aba Tecidos antes de criar uma roupa.</p>'
+      : state.items.slice().sort(function (a, b) { return a.nome.localeCompare(b.nome); }).map(function (it) {
+          var checked = v.tecidosVinculados.indexOf(it.id) > -1;
+          return '<label class="ct-check-row"><input type="checkbox" class="ct-r-tecido-check" value="' + esc(it.id) + '"' + (checked ? ' checked' : '') + ' /> ' +
+            esc(it.nome) + ' <span class="ct-check-stock">(' + esc(it.quantidade) + ' disponível)</span></label>';
+        }).join('');
+
+    return '' +
+      '<div class="ct-overlay">' +
+      '<p class="ct-form-title">' + (state.roupaEditingId ? 'Editar roupa' : 'Nova roupa') + '</p>' +
+      '<div class="ct-field"><label>Nome *</label><input id="ct-r-nome" value="' + esc(v.nome) + '" placeholder="Camisa X" /></div>' +
+      '<div class="ct-field"><label>Tecidos que podem ser usados *</label><div class="ct-check-list">' + checkboxes + '</div></div>' +
+      '<div id="ct-roupa-form-error" class="ct-error"></div>' +
+      '<div class="ct-form-actions">' +
+      '<button class="ct-btn" id="ct-roupa-submit-form">' + (state.roupaEditingId ? 'Salvar alterações' : 'Criar roupa') + '</button>' +
+      '<button class="ct-btn ct-btn-ghost" id="ct-roupa-cancel-form">Cancelar</button>' +
+      '</div>' +
+      '</div>';
+  }
+
+  function renderRoupaCard(roupa) {
+    var linked = (roupa.tecidosVinculados || [])
+      .map(function (id) { return state.items.find(function (it) { return it.id === id; }); })
+      .filter(Boolean);
+
+    var rows = linked.length === 0
+      ? '<p style="font-size:12.5px;color:var(--ink-soft)">Nenhum tecido vinculado disponível (pode ter sido removido do estoque).</p>'
+      : linked.map(function (it) {
+          var key = roupa.id + ':' + it.id;
+          var val = state.consumoDraft[key] !== undefined ? state.consumoDraft[key] : '';
+          return '<div class="ct-roupa-tecido-row">' +
+            '<span class="ct-roupa-tecido-name">' + esc(it.nome) + '<small>' + esc(it.quantidade) + ' disponível</small></span>' +
+            '<input class="ct-consumo-input" data-key="' + esc(key) + '" value="' + esc(val) + '" placeholder="0" />' +
+            '</div>';
+        }).join('');
+
+    var historico = '';
+    if (state.historicoOpen[roupa.id]) {
+      var cache = state.historicoCache[roupa.id];
+      if (!cache) {
+        historico = '<div class="ct-historico"><p style="font-size:12.5px;color:var(--ink-soft)">Carregando histórico...</p></div>';
+      } else if (cache.length === 0) {
+        historico = '<div class="ct-historico"><p style="font-size:12.5px;color:var(--ink-soft)">Nenhum consumo registrado ainda.</p></div>';
+      } else {
+        historico = '<div class="ct-historico">' + cache.map(function (c) {
+          return '<div class="ct-historico-row"><span>' + esc(c.tecidoNome) + ' — ' + esc(c.quantidade) + '</span><span>' + esc(fmtData(c.data)) + '</span></div>';
+        }).join('') + '</div>';
+      }
+    }
+
+    return '' +
+      '<div class="ct-roupa-card">' +
+      '<div class="ct-card-top">' +
+      '<div class="ct-card-name">' + esc(roupa.nome) + '</div>' +
+      '<div class="ct-card-actions">' +
+      '<button class="ct-icon-btn" data-edit-roupa="' + roupa.id + '" aria-label="Editar" title="Editar">&#9998;</button>' +
+      '<button class="ct-icon-btn" data-del-roupa="' + roupa.id + '" aria-label="Excluir" title="Excluir">&#10005;</button>' +
+      '</div>' +
+      '</div>' +
+      rows +
+      '<div id="ct-roupa-error-' + roupa.id + '" class="ct-error"></div>' +
+      '<div class="ct-form-actions">' +
+      '<button class="ct-btn" data-registrar-consumo="' + roupa.id + '">Registrar consumo</button>' +
+      '<button class="ct-btn ct-btn-ghost" data-toggle-historico="' + roupa.id + '">' + (state.historicoOpen[roupa.id] ? 'Ocultar histórico' : 'Ver histórico') + '</button>' +
+      '</div>' +
+      historico +
+      '</div>';
+  }
+
+  function renderRoupasTab() {
+    var html = '<div class="ct-toolbar"><button class="ct-btn" id="ct-open-new-roupa">+ Nova roupa</button></div>';
+
+    if (state.roupas.length === 0) {
+      html += '<div class="ct-empty"><b>Nenhuma roupa cadastrada</b>Crie uma roupa e vincule os tecidos que ela usa.</div>';
+    } else {
+      html += '<div class="ct-grid">' + state.roupas.map(renderRoupaCard).join('') + '</div>';
+    }
+
+    if (state.roupaFormOpen) html += renderRoupaForm();
+    return html;
+  }
+
+  function render() {
+    if (!currentUser) return;
+    syncDraftFromDOM();
+    syncRoupaDraftFromDOM();
+    syncConsumoDraftFromDOM();
+
+    var root = document.getElementById('ct-root');
+    if (!state.loaded || !state.roupasLoaded) { root.innerHTML = '<div class="ct-loading">Carregando catálogo...</div>'; return; }
+
+    if (state.dataError) {
+      root.innerHTML =
+        '<div class="ct-empty"><b>Não foi possível acessar seus dados</b>' +
+        'Erro: ' + esc(state.dataError) + '.<br/>Confira se as regras do Firestore foram <b>publicadas</b> no console do Firebase (Firestore Database &gt; Regras &gt; botão Publicar).' +
+        '</div>';
+      return;
+    }
+
+    var html = renderTabs();
+    html += state.activeTab === 'roupas' ? renderRoupasTab() : renderTecidosTab();
+
     root.innerHTML = html;
     attachEvents();
 
-    if (state.formOpen && state.addingCategory) {
+    if (state.activeTab === 'tecidos' && state.formOpen && state.addingCategory) {
       var nc = document.getElementById('ct-newcat-input');
       if (nc) nc.focus();
     }
@@ -394,6 +746,13 @@
 
   function attachEvents() {
     var root = document.getElementById('ct-root');
+
+    root.querySelectorAll('[data-tab]').forEach(function (el) {
+      el.addEventListener('click', function () {
+        state.activeTab = el.getAttribute('data-tab');
+        render();
+      });
+    });
 
     var searchInput = document.getElementById('ct-search-input');
     if (searchInput) {
@@ -441,5 +800,37 @@
 
     var confirmNewCat = document.getElementById('ct-confirm-newcat');
     if (confirmNewCat) confirmNewCat.addEventListener('click', confirmNewCategory);
+
+    // ---- Roupas ----
+    var openNewRoupa = document.getElementById('ct-open-new-roupa');
+    if (openNewRoupa) openNewRoupa.addEventListener('click', openNewRoupaForm);
+
+    var roupaSubmit = document.getElementById('ct-roupa-submit-form');
+    if (roupaSubmit) roupaSubmit.addEventListener('click', submitRoupaForm);
+    var roupaCancel = document.getElementById('ct-roupa-cancel-form');
+    if (roupaCancel) roupaCancel.addEventListener('click', closeRoupaForm);
+
+    root.querySelectorAll('[data-edit-roupa]').forEach(function (el) {
+      el.addEventListener('click', function () { openEditRoupaForm(el.getAttribute('data-edit-roupa')); });
+    });
+    root.querySelectorAll('[data-del-roupa]').forEach(function (el) {
+      el.addEventListener('click', function () { deleteRoupa(el.getAttribute('data-del-roupa')); });
+    });
+    root.querySelectorAll('[data-registrar-consumo]').forEach(function (el) {
+      el.addEventListener('click', function () { registrarConsumo(el.getAttribute('data-registrar-consumo')); });
+    });
+    root.querySelectorAll('[data-toggle-historico]').forEach(function (el) {
+      el.addEventListener('click', function () { toggleHistorico(el.getAttribute('data-toggle-historico')); });
+    });
+
+    root.querySelectorAll('.ct-consumo-input').forEach(function (el) {
+      el.addEventListener('input', function (e) {
+        var key = e.target.getAttribute('data-key');
+        state.consumoDraft[key] = e.target.value;
+      });
+    });
+
+    var rNome = document.getElementById('ct-r-nome');
+    if (rNome) rNome.addEventListener('input', function (e) { if (state.roupaDraft) state.roupaDraft.nome = e.target.value; });
   }
 })();
