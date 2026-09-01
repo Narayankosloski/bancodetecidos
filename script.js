@@ -21,7 +21,8 @@
     { color: '#5C6B4E', bg: '#E1E6DA' },
     { color: '#7C4A8A', bg: '#E9DDEC' }
   ];
-  var EMPTY_DRAFT = { nome: '', categoria: '', quantidade: '', valor: '', marca: '', tipoModelo: '', tamanho: '', corEstampa: '' };
+  var EMPTY_DRAFT = { nome: '', categoria: '', quantidade: '', valor: '', estoqueMinimo: '', marca: '', tipoModelo: '', tamanho: '', corEstampa: '' };
+  var ESTOQUE_MINIMO_PADRAO = 0; // usado quando o tecido antigo não possui esse campo
 
   var state = {
     items: [],
@@ -38,6 +39,8 @@
     dataError: null,
 
     activeTab: 'tecidos',
+    entradaOpenId: null,
+    entradaDraft: '',
 
     roupas: [],
     roupasLoaded: false,
@@ -53,6 +56,7 @@
   var userRef = null;
   var itemsRef = null;
   var roupasRef = null;
+  var movimentacoesRef = null;
   var unsubUser = null;
   var unsubItems = null;
   var unsubRoupas = null;
@@ -86,11 +90,66 @@
     return n.toLocaleString('pt-BR', { maximumFractionDigits: 3 }) + ' m';
   }
 
-  // Converte um número de volta para o formato de exibição (vírgula decimal),
-  // arredondando para evitar sobras de ponto flutuante (ex: 20 - 1.5 = 18.5).
-  function toStoredQty(n) {
-    var rounded = Math.round(n * 1000) / 1000;
-    return String(rounded).replace('.', ',');
+  // ---------- Números x texto (padrão brasileiro na tela, Number no Firestore) ----------
+  // Compatível com documentos antigos: toNumber() já converte tanto "15,5" (string antiga)
+  // quanto 15.5 (Number novo), então toda leitura de dado existente continua funcionando.
+
+  function roundQty(n) {
+    return Math.round(n * 1000) / 1000;
+  }
+
+  // Converte um valor (string digitada ou número vindo do Firestore) para um Number válido,
+  // pronto para ser salvo. Retorna null se inválido ou negativo (nunca faz sentido aqui).
+  function parseQuantidade(str) {
+    if (str === undefined || str === null || String(str).trim() === '') return null;
+    var n = toNumber(str);
+    if (isNaN(n) || n < 0) return null;
+    return roundQty(n);
+  }
+
+  function parseValor(str) {
+    if (str === undefined || str === null || String(str).trim() === '') return null;
+    var n = toNumber(str);
+    if (isNaN(n) || n < 0) return null;
+    return Math.round(n * 100) / 100;
+  }
+
+  // Formata um número (ou string antiga) para exibir dentro de um campo editável, com vírgula
+  // e sem unidade nem símbolo de moeda (diferente de fmtMetros/fmtMoney, que são só leitura).
+  function formatarQuantidade(v) {
+    var n = toNumber(v);
+    if (isNaN(n)) return '';
+    return String(roundQty(n)).replace('.', ',');
+  }
+
+  function formatarValorInput(v) {
+    var n = toNumber(v);
+    if (isNaN(n)) return '';
+    return n.toFixed(2).replace('.', ',');
+  }
+
+  // Número formatado só para leitura (sem unidade), usado em quantidades genéricas nos cards.
+  function formatarNumero(v) {
+    var n = toNumber(v);
+    if (isNaN(n)) n = 0;
+    return n.toLocaleString('pt-BR', { maximumFractionDigits: 3 });
+  }
+
+  // ---------- Estoque mínimo / status do estoque ----------
+
+  function getEstoqueMinimo(it) {
+    var n = toNumber(it.estoqueMinimo);
+    if (isNaN(n) || n < 0) return ESTOQUE_MINIMO_PADRAO;
+    return n;
+  }
+
+  function obterStatusEstoque(it) {
+    var qtd = toNumber(it.quantidade);
+    if (isNaN(qtd)) qtd = 0;
+    var min = getEstoqueMinimo(it);
+    if (qtd <= 0) return { key: 'sem', label: 'Sem estoque' };
+    if (qtd <= min) return { key: 'baixo', label: 'Estoque baixo' };
+    return { key: 'normal', label: 'Estoque normal' };
   }
 
   function fmtData(ts) {
@@ -158,6 +217,7 @@
       userRef = db.collection('usuarios').doc(user.uid);
       itemsRef = userRef.collection('itens');
       roupasRef = userRef.collection('roupas');
+      movimentacoesRef = userRef.collection('movimentacoes');
 
       unsubUser = userRef.onSnapshot(function (doc) {
         state.categories = (doc.exists && doc.data().categorias) || [];
@@ -198,6 +258,7 @@
       userRef = null;
       itemsRef = null;
       roupasRef = null;
+      movimentacoesRef = null;
       state.items = [];
       state.categories = [];
       state.roupas = [];
@@ -221,12 +282,21 @@
     });
   }
 
+  // ---------- Movimentações de estoque (histórico independente de entradas/consumos/cancelamentos) ----------
+  // Sempre gravadas dentro da mesma transação que altera o estoque, então nunca ficam
+  // dessincronizadas do saldo real. tipo: 'entrada' | 'consumo' | 'cancelamento' (futuramente 'ajuste').
+
+  function montarMovimentacao(campos) {
+    return Object.assign({ data: firebase.firestore.FieldValue.serverTimestamp() }, campos);
+  }
+
   // ---------- Rascunho do formulário (evita perder o que já foi digitado) ----------
 
   var FIELD_MAP = {
     'ct-f-nome': 'nome',
     'ct-f-quantidade': 'quantidade',
     'ct-f-valor': 'valor',
+    'ct-f-estoquemin': 'estoqueMinimo',
     'ct-f-marca': 'marca',
     'ct-f-tipo': 'tipoModelo',
     'ct-f-tamanho': 'tamanho',
@@ -265,7 +335,11 @@
     state.showOptional = true;
     state.addingCategory = false;
     state.newCategoryDraft = '';
-    state.draft = Object.assign({}, EMPTY_DRAFT, it);
+    state.draft = Object.assign({}, EMPTY_DRAFT, it, {
+      quantidade: formatarQuantidade(it.quantidade),
+      valor: formatarValorInput(it.valor),
+      estoqueMinimo: it.estoqueMinimo === undefined ? '' : formatarQuantidade(it.estoqueMinimo)
+    });
     render();
   }
 
@@ -281,6 +355,63 @@
     itemsRef.doc(id).delete().catch(function (e) { console.error('Erro ao excluir', e); });
   }
 
+  // ---------- Entrada de estoque ----------
+
+  function abrirEntrada(id) {
+    state.entradaOpenId = id;
+    state.entradaDraft = '';
+    render();
+    setTimeout(function () {
+      var el = document.getElementById('ct-entrada-input');
+      if (el) el.focus();
+    }, 0);
+  }
+
+  function fecharEntrada() {
+    state.entradaOpenId = null;
+    state.entradaDraft = '';
+    render();
+  }
+
+  function confirmarEntrada(id) {
+    var entradaInput = document.getElementById('ct-entrada-input');
+    if (entradaInput) state.entradaDraft = entradaInput.value;
+    var errEl = document.getElementById('ct-entrada-error-' + id);
+    var qtd = parseQuantidade(state.entradaDraft);
+    if (qtd === null || qtd <= 0) {
+      if (errEl) errEl.textContent = 'Informe uma quantidade válida, maior que zero.';
+      return;
+    }
+    if (!itemsRef || !movimentacoesRef) return;
+    if (errEl) errEl.textContent = 'Registrando...';
+
+    var itemRef = itemsRef.doc(id);
+    db.runTransaction(function (tx) {
+      return tx.get(itemRef).then(function (doc) {
+        if (!doc.exists) throw { message: 'Este tecido não existe mais.' };
+        var estoqueAtual = toNumber(doc.data().quantidade);
+        if (isNaN(estoqueAtual)) estoqueAtual = 0;
+        var novoEstoque = roundQty(estoqueAtual + qtd);
+        tx.update(itemRef, { quantidade: novoEstoque });
+        var movRef = movimentacoesRef.doc();
+        tx.set(movRef, montarMovimentacao({
+          tipo: 'entrada',
+          tecidoId: id,
+          tecidoNome: doc.data().nome,
+          quantidade: qtd
+        }));
+      });
+    }).then(function () {
+      state.entradaOpenId = null;
+      state.entradaDraft = '';
+      render();
+    }).catch(function (e) {
+      console.error('Erro ao registrar entrada', e);
+      var errEl2 = document.getElementById('ct-entrada-error-' + id);
+      if (errEl2) errEl2.textContent = e.message || 'Não foi possível registrar a entrada.';
+    });
+  }
+
   function submitForm() {
     syncDraftFromDOM();
     var v = state.draft;
@@ -289,8 +420,13 @@
       errEl.textContent = 'Preencha nome, categoria, quantidade, valor e marca.';
       return;
     }
-    if (isNaN(toNumber(v.quantidade)) || isNaN(toNumber(v.valor))) {
-      errEl.textContent = 'Quantidade e valor precisam ser números.';
+    var qtd = parseQuantidade(v.quantidade);
+    var valor = parseValor(v.valor);
+    var estoqueMin = (v.estoqueMinimo === undefined || v.estoqueMinimo === null || String(v.estoqueMinimo).trim() === '')
+      ? ESTOQUE_MINIMO_PADRAO
+      : parseQuantidade(v.estoqueMinimo);
+    if (qtd === null || valor === null || estoqueMin === null) {
+      errEl.textContent = 'Quantidade, valor e estoque mínimo precisam ser números válidos (0 ou mais).';
       return;
     }
     errEl.textContent = '';
@@ -300,7 +436,7 @@
     if (isNewCategory) state.categories.push(v.categoria);
 
     var payload = {
-      nome: v.nome, categoria: v.categoria, quantidade: v.quantidade, valor: v.valor,
+      nome: v.nome, categoria: v.categoria, quantidade: qtd, valor: valor, estoqueMinimo: estoqueMin,
       marca: v.marca, tipoModelo: v.tipoModelo, tamanho: v.tamanho, corEstampa: v.corEstampa
     };
 
@@ -388,6 +524,14 @@
 
   function deleteRoupa(id) {
     if (!roupasRef) return;
+    var roupa = state.roupas.find(function (r) { return r.id === id; });
+    var possuiHistorico = roupa && ((toNumber(roupa.totalConsumidoMetros) || 0) > 0 || (toNumber(roupa.totalConsumidoValor) || 0) > 0);
+    if (possuiHistorico) {
+      var ok = window.confirm(
+        'Esta roupa possui registros de consumo.\n\nExcluir a roupa não devolverá os tecidos ao estoque.\n\nDeseja realmente continuar?'
+      );
+      if (!ok) return;
+    }
     roupasRef.doc(id).delete().catch(function (e) { console.error('Erro ao excluir roupa', e); });
   }
 
@@ -436,26 +580,49 @@
     });
   }
 
-  function registrarConsumo(roupaId) {
-    syncConsumoDraftFromDOM();
-    var roupa = state.roupas.find(function (r) { return r.id === roupaId; });
-    var errEl = document.getElementById('ct-roupa-error-' + roupaId);
-    if (!roupa || !itemsRef || !roupasRef) return;
-
+  // Monta a lista de usos válidos a partir do que o usuário digitou nos campos de consumo,
+  // sem tocar no Firestore ainda. Reaproveitada tanto para o preview de custo quanto para
+  // validar antes de abrir a confirmação.
+  function coletarUsosConsumo(roupa, roupaId) {
     var usages = [];
-    var invalido = false;
+    var erro = null;
     (roupa.tecidosVinculados || []).forEach(function (tecidoId) {
       var tecido = state.items.find(function (it) { return it.id === tecidoId; });
       if (!tecido) return; // tecido removido do estoque, ignora
       var raw = state.consumoDraft[roupaId + ':' + tecidoId];
       if (raw === undefined || raw === '' || raw === null) return;
-      var qty = toNumber(raw);
-      if (isNaN(qty) || qty < 0) { invalido = true; return; }
-      if (qty > 0) usages.push({ tecidoId: tecidoId, tecidoNome: tecido.nome, qty: qty });
+      var qty = parseQuantidade(raw);
+      if (qty === null) { erro = 'Informe valores válidos (0 ou mais).'; return; }
+      if (qty > 0) {
+        var valorUnitario = toNumber(tecido.valor);
+        if (isNaN(valorUnitario)) valorUnitario = 0;
+        usages.push({ tecidoId: tecidoId, tecidoNome: tecido.nome, qty: qty, valorUnitarioPreview: valorUnitario });
+      }
     });
+    return { usages: usages, erro: erro };
+  }
 
-    if (invalido) { if (errEl) errEl.textContent = 'Informe valores válidos (0 ou mais).'; return; }
+  function registrarConsumo(roupaId) {
+    syncConsumoDraftFromDOM();
+    var roupa = state.roupas.find(function (r) { return r.id === roupaId; });
+    var errEl = document.getElementById('ct-roupa-error-' + roupaId);
+    if (!roupa || !itemsRef || !roupasRef || !movimentacoesRef) return;
+
+    var coleta = coletarUsosConsumo(roupa, roupaId);
+    if (coleta.erro) { if (errEl) errEl.textContent = coleta.erro; return; }
+    var usages = coleta.usages;
     if (usages.length === 0) { if (errEl) errEl.textContent = 'Informe ao menos uma quantidade utilizada.'; return; }
+
+    var totalPreview = 0;
+    var resumo = usages.map(function (u) {
+      var custo = u.qty * u.valorUnitarioPreview;
+      totalPreview += custo;
+      return u.tecidoNome + ': ' + formatarNumero(u.qty) + ' m (' + fmtMoney(custo) + ')';
+    }).join('\n');
+    var confirmado = window.confirm(
+      'Confirmar consumo?\n\nRoupa: ' + roupa.nome + '\n' + resumo + '\n\nTotal: ' + fmtMoney(totalPreview)
+    );
+    if (!confirmado) return;
 
     if (errEl) errEl.textContent = 'Registrando...';
 
@@ -468,34 +635,48 @@
           var estoqueAtual = toNumber(doc.data().quantidade);
           if (isNaN(estoqueAtual)) estoqueAtual = 0;
           if (u.qty > estoqueAtual) {
-            throw { message: 'Estoque insuficiente de "' + u.tecidoNome + '" (disponível: ' + doc.data().quantidade + ').' };
+            throw { message: 'Estoque insuficiente de "' + u.tecidoNome + '" (disponível: ' + formatarNumero(estoqueAtual) + ').' };
           }
           var valorUnitario = toNumber(doc.data().valor);
           if (isNaN(valorUnitario)) valorUnitario = 0;
-          return { ref: itemsRef.doc(u.tecidoId), novoEstoque: estoqueAtual - u.qty, valorUnitario: valorUnitario, u: u };
+          return { ref: itemsRef.doc(u.tecidoId), novoEstoque: roundQty(estoqueAtual - u.qty), valorUnitario: valorUnitario, u: u };
         });
       });
       return Promise.all(reads).then(function (results) {
         var somaMetros = 0, somaValor = 0;
+        var roupaUpdates = {};
         results.forEach(function (r) {
-          tx.update(r.ref, { quantidade: toStoredQty(r.novoEstoque) });
-          var valorGasto = r.u.qty * r.valorUnitario;
+          tx.update(r.ref, { quantidade: r.novoEstoque });
+          var valorGasto = Math.round(r.u.qty * r.valorUnitario * 100) / 100;
           somaMetros += r.u.qty;
           somaValor += valorGasto;
           var consumoRef = roupaRef.collection('consumos').doc();
           tx.set(consumoRef, {
             tecidoId: r.u.tecidoId,
             tecidoNome: r.u.tecidoNome,
-            quantidade: toStoredQty(r.u.qty),
+            quantidade: r.u.qty,
             valorUnitario: r.valorUnitario,
             valorGasto: valorGasto,
+            status: 'ativo',
             data: firebase.firestore.FieldValue.serverTimestamp()
           });
+          var movRef = movimentacoesRef.doc();
+          tx.set(movRef, montarMovimentacao({
+            tipo: 'consumo',
+            roupaId: roupaId,
+            roupaNome: roupa.nome,
+            tecidoId: r.u.tecidoId,
+            tecidoNome: r.u.tecidoNome,
+            quantidade: r.u.qty,
+            valorUnitario: r.valorUnitario,
+            valorTotal: valorGasto,
+            consumoId: consumoRef.id
+          }));
+          roupaUpdates['consumoPorTecido.' + r.u.tecidoId] = firebase.firestore.FieldValue.increment(r.u.qty);
         });
-        tx.update(roupaRef, {
-          totalConsumidoMetros: firebase.firestore.FieldValue.increment(somaMetros),
-          totalConsumidoValor: firebase.firestore.FieldValue.increment(somaValor)
-        });
+        roupaUpdates.totalConsumidoMetros = firebase.firestore.FieldValue.increment(somaMetros);
+        roupaUpdates.totalConsumidoValor = firebase.firestore.FieldValue.increment(somaValor);
+        tx.update(roupaRef, roupaUpdates);
       });
     }).then(function () {
       usages.forEach(function (u) { delete state.consumoDraft[roupaId + ':' + u.tecidoId]; });
@@ -510,10 +691,78 @@
     });
   }
 
+  // ---------- Cancelar/desfazer um consumo ----------
+  // Nunca apaga o registro: marca status: 'cancelado', devolve a quantidade ao tecido
+  // (se ele ainda existir) e grava uma movimentação de cancelamento. Tudo em uma transação
+  // para impedir que o mesmo consumo seja cancelado duas vezes (checa status dentro dela).
+
+  function cancelarConsumo(roupaId, consumoId) {
+    var roupa = state.roupas.find(function (r) { return r.id === roupaId; });
+    if (!roupa || !roupasRef || !itemsRef || !movimentacoesRef) return;
+
+    var confirmado = window.confirm('Desfazer este consumo?\n\nA quantidade será devolvida ao estoque do tecido, se ele ainda existir.');
+    if (!confirmado) return;
+
+    var roupaRef = roupasRef.doc(roupaId);
+    var consumoRef = roupaRef.collection('consumos').doc(consumoId);
+
+    db.runTransaction(function (tx) {
+      return tx.get(consumoRef).then(function (consumoDoc) {
+        if (!consumoDoc.exists) throw { message: 'Este registro de consumo não foi encontrado.' };
+        var consumo = consumoDoc.data();
+        if (consumo.status === 'cancelado') throw { message: 'Este consumo já foi cancelado.' };
+
+        var qty = toNumber(consumo.quantidade);
+        if (isNaN(qty)) qty = 0;
+        var valorGasto = toNumber(consumo.valorGasto);
+        if (isNaN(valorGasto)) valorGasto = 0;
+
+        return tx.get(itemsRef.doc(consumo.tecidoId)).then(function (tecidoDoc) {
+          if (tecidoDoc.exists) {
+            var estoqueAtual = toNumber(tecidoDoc.data().quantidade);
+            if (isNaN(estoqueAtual)) estoqueAtual = 0;
+            tx.update(itemsRef.doc(consumo.tecidoId), { quantidade: roundQty(estoqueAtual + qty) });
+          }
+
+          tx.update(consumoRef, { status: 'cancelado' });
+
+          var campoConsumoTecido = 'consumoPorTecido.' + consumo.tecidoId;
+          var decremento = {};
+          decremento[campoConsumoTecido] = firebase.firestore.FieldValue.increment(-qty);
+          tx.update(roupaRef, Object.assign({
+            totalConsumidoMetros: firebase.firestore.FieldValue.increment(-qty),
+            totalConsumidoValor: firebase.firestore.FieldValue.increment(-valorGasto)
+          }, decremento));
+
+          var movRef = movimentacoesRef.doc();
+          tx.set(movRef, montarMovimentacao({
+            tipo: 'cancelamento',
+            roupaId: roupaId,
+            roupaNome: roupa.nome,
+            tecidoId: consumo.tecidoId,
+            tecidoNome: consumo.tecidoNome,
+            quantidade: qty,
+            valorTotal: valorGasto,
+            consumoId: consumoId,
+            estoqueDevolvido: tecidoDoc.exists
+          }));
+        });
+      });
+    }).then(function () {
+      if (state.historicoOpen[roupaId]) fetchHistorico(roupaId);
+      render();
+    }).catch(function (e) {
+      console.error('Erro ao cancelar consumo', e);
+      var errEl = document.getElementById('ct-roupa-error-' + roupaId);
+      if (errEl) errEl.textContent = e.message || 'Não foi possível cancelar o consumo.';
+      render();
+    });
+  }
+
   function fetchHistorico(roupaId) {
     if (!roupasRef) return;
     roupasRef.doc(roupaId).collection('consumos').orderBy('data', 'desc').limit(20).get().then(function (snap) {
-      state.historicoCache[roupaId] = snap.docs.map(function (d) { return d.data(); });
+      state.historicoCache[roupaId] = snap.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); });
       render();
     }).catch(function (e) {
       console.error('Erro ao buscar histórico', e);
@@ -550,10 +799,25 @@
 
   function renderCard(it) {
     var cc = catColor(it.categoria);
+    var status = obterStatusEstoque(it);
     var extras = '';
     if (it.tipoModelo) extras += '<div class="ct-card-row"><span>Tipo/modelo</span><span>' + esc(it.tipoModelo) + '</span></div>';
     if (it.tamanho) extras += '<div class="ct-card-row"><span>Tamanho</span><span>' + esc(it.tamanho) + '</span></div>';
     if (it.corEstampa) extras += '<div class="ct-card-row"><span>Cor/estampa</span><span>' + esc(it.corEstampa) + '</span></div>';
+
+    var entradaBlock = '';
+    if (state.entradaOpenId === it.id) {
+      entradaBlock =
+        '<div class="ct-entrada-form">' +
+        '<div class="ct-field"><label>Quantidade a adicionar</label><input id="ct-entrada-input" value="' + esc(state.entradaDraft) + '" placeholder="10" /></div>' +
+        '<div id="ct-entrada-error-' + it.id + '" class="ct-error"></div>' +
+        '<div class="ct-form-actions">' +
+        '<button class="ct-btn" data-confirmar-entrada="' + it.id + '">Confirmar entrada</button>' +
+        '<button class="ct-btn ct-btn-ghost" data-cancelar-entrada="1">Cancelar</button>' +
+        '</div>' +
+        '</div>';
+    }
+
     return '' +
       '<div class="ct-card">' +
       '<div class="ct-pinked" style="--tag-color:' + cc.color + '"></div>' +
@@ -561,16 +825,19 @@
       '<div class="ct-card-top">' +
       '<div class="ct-card-name">' + esc(it.nome) + '</div>' +
       '<div class="ct-card-actions">' +
+      '<button class="ct-icon-btn" data-open-entrada="' + it.id + '" aria-label="Registrar entrada" title="Registrar entrada">&#43;</button>' +
       '<button class="ct-icon-btn" data-edit="' + it.id + '" aria-label="Editar" title="Editar">&#9998;</button>' +
       '<button class="ct-icon-btn" data-del="' + it.id + '" aria-label="Excluir" title="Excluir">&#10005;</button>' +
       '</div>' +
       '</div>' +
       '<span class="ct-tag" style="--tag-color:' + cc.color + ';--tag-bg:' + cc.bg + '">' + esc(it.categoria) + '</span>' +
       '<div class="ct-card-row"><span>Marca</span><span>' + esc(it.marca) + '</span></div>' +
-      '<div class="ct-card-row"><span>Quantidade</span><span>' + esc(it.quantidade) + '</span></div>' +
+      '<div class="ct-card-row"><span>Quantidade</span><span>' + formatarNumero(it.quantidade) + '</span></div>' +
+      '<div class="ct-stock-row"><span class="ct-stock-dot ct-stock-' + status.key + '"></span><span class="ct-stock-label ct-stock-' + status.key + '">' + status.label + '</span></div>' +
       extras +
       '<div class="ct-card-row" style="border-top:1px solid var(--line);margin-top:6px;padding-top:8px"><span>Valor</span><span class="ct-valor">' + fmtMoney(it.valor) + '</span></div>' +
       '<div class="ct-card-row"><span>Valor em estoque</span><span>' + fmtMoney(toNumber(it.quantidade) * toNumber(it.valor)) + '</span></div>' +
+      entradaBlock +
       '</div>' +
       '</div>';
   }
@@ -610,6 +877,7 @@
       '<div class="ct-field"><label>Quantidade *</label><input id="ct-f-quantidade" value="' + esc(v.quantidade) + '" placeholder="15" /></div>' +
       '<div class="ct-field"><label>Valor *</label><input id="ct-f-valor" value="' + esc(v.valor) + '" placeholder="25,90" /></div>' +
       '</div>' +
+      '<div class="ct-field"><label>Estoque mínimo</label><input id="ct-f-estoquemin" value="' + esc(v.estoqueMinimo) + '" placeholder="0" /></div>' +
       '<div class="ct-field"><label>Marca *</label><input id="ct-f-marca" value="' + esc(v.marca) + '" placeholder="Círculo" /></div>' +
       (state.showOptional ? '' : '<span class="ct-optional-toggle" id="ct-show-optional">+ tipo, tamanho e cor (opcional)</span>') +
       '<div style="' + (state.showOptional ? '' : 'display:none') + '">' +
@@ -675,7 +943,7 @@
       : state.items.slice().sort(function (a, b) { return a.nome.localeCompare(b.nome); }).map(function (it) {
           var checked = v.tecidosVinculados.indexOf(it.id) > -1;
           return '<label class="ct-check-row"><input type="checkbox" class="ct-r-tecido-check" value="' + esc(it.id) + '"' + (checked ? ' checked' : '') + ' /> ' +
-            esc(it.nome) + ' <span class="ct-check-stock">(' + esc(it.quantidade) + ' disponível)</span></label>';
+            esc(it.nome) + ' <span class="ct-check-stock">(' + formatarNumero(it.quantidade) + ' disponível)</span></label>';
         }).join('');
 
     return '' +
@@ -696,14 +964,25 @@
       .map(function (id) { return state.items.find(function (it) { return it.id === id; }); })
       .filter(Boolean);
 
+    var consumoPorTecido = roupa.consumoPorTecido || {};
+
     var rows = linked.length === 0
       ? '<p style="font-size:12.5px;color:var(--ink-soft)">Nenhum tecido vinculado disponível (pode ter sido removido do estoque).</p>'
       : linked.map(function (it) {
           var key = roupa.id + ':' + it.id;
           var val = state.consumoDraft[key] !== undefined ? state.consumoDraft[key] : '';
+          var valorUnitario = toNumber(it.valor);
+          if (isNaN(valorUnitario)) valorUnitario = 0;
+          var custoAtual = isNaN(toNumber(val)) ? 0 : toNumber(val) * valorUnitario;
+          var consumidoNestaRoupa = toNumber(consumoPorTecido[it.id]) || 0;
           return '<div class="ct-roupa-tecido-row">' +
-            '<span class="ct-roupa-tecido-name">' + esc(it.nome) + '<small>' + esc(it.quantidade) + ' disponível</small></span>' +
-            '<input class="ct-consumo-input" data-key="' + esc(key) + '" value="' + esc(val) + '" placeholder="0" />' +
+            '<span class="ct-roupa-tecido-name">' + esc(it.nome) +
+            '<small>Disponível: ' + formatarNumero(it.quantidade) + ' m · Consumido nesta roupa: ' + formatarNumero(consumidoNestaRoupa) + ' m</small>' +
+            '</span>' +
+            '<span class="ct-consumo-col">' +
+            '<input class="ct-consumo-input" data-key="' + esc(key) + '" data-valorunit="' + valorUnitario + '" value="' + esc(val) + '" placeholder="0" />' +
+            '<span class="ct-consumo-custo" data-costfor="' + esc(key) + '">' + fmtMoney(custoAtual) + '</span>' +
+            '</span>' +
             '</div>';
         }).join('');
 
@@ -716,7 +995,14 @@
         historico = '<div class="ct-historico"><p style="font-size:12.5px;color:var(--ink-soft)">Nenhum consumo registrado ainda.</p></div>';
       } else {
         historico = '<div class="ct-historico">' + cache.map(function (c) {
-          return '<div class="ct-historico-row"><span>' + esc(c.tecidoNome) + ' — ' + esc(c.quantidade) + ' — ' + fmtMoney(c.valorGasto) + '</span><span>' + esc(fmtData(c.data)) + '</span></div>';
+          var cancelado = c.status === 'cancelado';
+          var statusLabel = cancelado ? 'Cancelado' : 'Ativo';
+          var desfazerBtn = cancelado ? '' :
+            '<button class="ct-icon-btn" data-cancel-consumo="' + roupa.id + ':' + c.id + '" title="Desfazer consumo">&#8617;</button>';
+          return '<div class="ct-historico-row' + (cancelado ? ' ct-historico-cancelado' : '') + '">' +
+            '<span>' + esc(c.tecidoNome) + ' — ' + formatarNumero(c.quantidade) + ' m — ' + fmtMoney(c.valorGasto) + ' · ' + statusLabel + '</span>' +
+            '<span>' + esc(fmtData(c.data)) + desfazerBtn + '</span>' +
+            '</div>';
         }).join('') + '</div>';
       }
     }
@@ -832,6 +1118,18 @@
       el.addEventListener('click', function () { deleteItem(el.getAttribute('data-del')); });
     });
 
+    root.querySelectorAll('[data-open-entrada]').forEach(function (el) {
+      el.addEventListener('click', function () { abrirEntrada(el.getAttribute('data-open-entrada')); });
+    });
+    root.querySelectorAll('[data-confirmar-entrada]').forEach(function (el) {
+      el.addEventListener('click', function () { confirmarEntrada(el.getAttribute('data-confirmar-entrada')); });
+    });
+    root.querySelectorAll('[data-cancelar-entrada]').forEach(function (el) {
+      el.addEventListener('click', fecharEntrada);
+    });
+    var entradaInput = document.getElementById('ct-entrada-input');
+    if (entradaInput) entradaInput.addEventListener('input', function (e) { state.entradaDraft = e.target.value; });
+
     var submitBtn = document.getElementById('ct-submit-form');
     if (submitBtn) submitBtn.addEventListener('click', submitForm);
     var cancelBtn = document.getElementById('ct-cancel-form');
@@ -875,6 +1173,17 @@
       el.addEventListener('input', function (e) {
         var key = e.target.getAttribute('data-key');
         state.consumoDraft[key] = e.target.value;
+        var valorUnitario = toNumber(e.target.getAttribute('data-valorunit')) || 0;
+        var qty = toNumber(e.target.value);
+        var custoEl = root.querySelector('[data-costfor="' + key + '"]');
+        if (custoEl) custoEl.textContent = fmtMoney(isNaN(qty) ? 0 : qty * valorUnitario);
+      });
+    });
+
+    root.querySelectorAll('[data-cancel-consumo]').forEach(function (el) {
+      el.addEventListener('click', function () {
+        var parts = el.getAttribute('data-cancel-consumo').split(':');
+        cancelarConsumo(parts[0], parts[1]);
       });
     });
 

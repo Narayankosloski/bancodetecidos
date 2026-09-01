@@ -111,3 +111,20 @@ body {
 .ct-summary-bar b { color: var(--thread-dark); font-family: 'IBM Plex Mono', monospace; font-weight: 500; }
 .ct-roupa-total { font-size: 12.5px; color: var(--ink-soft); margin-bottom: 8px; }
 .ct-roupa-total b { color: var(--thread-dark); font-family: 'IBM Plex Mono', monospace; font-weight: 500; }
+
+.ct-stock-row { display: flex; align-items: center; gap: 6px; font-size: 12px; margin: 2px 0 8px; }
+.ct-stock-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+.ct-stock-dot.ct-stock-normal, .ct-stock-label.ct-stock-normal { background: var(--sage); color: var(--sage); }
+.ct-stock-dot.ct-stock-baixo, .ct-stock-label.ct-stock-baixo { background: var(--mustard); color: var(--mustard); }
+.ct-stock-dot.ct-stock-sem, .ct-stock-label.ct-stock-sem { background: var(--danger); color: var(--danger); }
+.ct-stock-label { font-weight: 500; }
+
+.ct-entrada-form { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line); }
+
+.ct-consumo-col { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; flex-shrink: 0; }
+.ct-consumo-custo { font-family: 'IBM Plex Mono', monospace; font-size: 11.5px; color: var(--ink-soft); }
+
+.ct-historico-row { align-items: center; }
+.ct-historico-row .ct-icon-btn { width: 22px; height: 22px; font-size: 12px; margin-left: 6px; }
+.ct-historico-cancelado { opacity: 0.55; text-decoration: line-through; }
+.ct-historico-cancelado .ct-icon-btn { display: none; }
