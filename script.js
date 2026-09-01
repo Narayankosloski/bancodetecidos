@@ -70,14 +70,20 @@
   }
 
   function toNumber(str) {
-    if (!str) return NaN;
+    if (str === undefined || str === null || str === '') return NaN;
     return parseFloat(String(str).replace(',', '.'));
   }
 
   function fmtMoney(v) {
     var n = toNumber(v);
-    if (isNaN(n)) return '';
+    if (isNaN(n)) n = 0;
     return 'R$ ' + n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
+  function fmtMetros(v) {
+    var n = toNumber(v);
+    if (isNaN(n)) n = 0;
+    return n.toLocaleString('pt-BR', { maximumFractionDigits: 3 }) + ' m';
   }
 
   // Converte um número de volta para o formato de exibição (vírgula decimal),
@@ -458,19 +464,31 @@
           if (u.qty > estoqueAtual) {
             throw { message: 'Estoque insuficiente de "' + u.tecidoNome + '" (disponível: ' + doc.data().quantidade + ').' };
           }
-          return { ref: itemsRef.doc(u.tecidoId), novoEstoque: estoqueAtual - u.qty, u: u };
+          var valorUnitario = toNumber(doc.data().valor);
+          if (isNaN(valorUnitario)) valorUnitario = 0;
+          return { ref: itemsRef.doc(u.tecidoId), novoEstoque: estoqueAtual - u.qty, valorUnitario: valorUnitario, u: u };
         });
       });
       return Promise.all(reads).then(function (results) {
+        var somaMetros = 0, somaValor = 0;
         results.forEach(function (r) {
           tx.update(r.ref, { quantidade: toStoredQty(r.novoEstoque) });
+          var valorGasto = r.u.qty * r.valorUnitario;
+          somaMetros += r.u.qty;
+          somaValor += valorGasto;
           var consumoRef = roupaRef.collection('consumos').doc();
           tx.set(consumoRef, {
             tecidoId: r.u.tecidoId,
             tecidoNome: r.u.tecidoNome,
             quantidade: toStoredQty(r.u.qty),
+            valorUnitario: r.valorUnitario,
+            valorGasto: valorGasto,
             data: firebase.firestore.FieldValue.serverTimestamp()
           });
+        });
+        tx.update(roupaRef, {
+          totalConsumidoMetros: firebase.firestore.FieldValue.increment(somaMetros),
+          totalConsumidoValor: firebase.firestore.FieldValue.increment(somaValor)
         });
       });
     }).then(function () {
@@ -546,6 +564,7 @@
       '<div class="ct-card-row"><span>Quantidade</span><span>' + esc(it.quantidade) + '</span></div>' +
       extras +
       '<div class="ct-card-row" style="border-top:1px solid var(--line);margin-top:6px;padding-top:8px"><span>Valor</span><span class="ct-valor">' + fmtMoney(it.valor) + '</span></div>' +
+      '<div class="ct-card-row"><span>Valor em estoque</span><span>' + fmtMoney(toNumber(it.quantidade) * toNumber(it.valor)) + '</span></div>' +
       '</div>' +
       '</div>';
   }
@@ -619,6 +638,19 @@
       '</div>';
     html += renderChips();
 
+    if (items.length > 0) {
+      var totalM = 0, totalV = 0;
+      items.forEach(function (it) {
+        var q = toNumber(it.quantidade);
+        if (!isNaN(q)) {
+          totalM += q;
+          var v = toNumber(it.valor);
+          if (!isNaN(v)) totalV += q * v;
+        }
+      });
+      html += '<div class="ct-summary-bar"><span>Em estoque: <b>' + fmtMetros(totalM) + '</b></span><span>Valor em estoque: <b>' + fmtMoney(totalV) + '</b></span></div>';
+    }
+
     if (items.length === 0) {
       html += '<div class="ct-empty"><b>' + (state.items.length === 0 ? 'Nenhum item cadastrado' : 'Nada encontrado') + '</b>' +
         (state.items.length === 0 ? 'Cadastre seu primeiro tecido, linha ou aviamento.' : 'Tente outra busca ou categoria.') + '</div>';
@@ -678,7 +710,7 @@
         historico = '<div class="ct-historico"><p style="font-size:12.5px;color:var(--ink-soft)">Nenhum consumo registrado ainda.</p></div>';
       } else {
         historico = '<div class="ct-historico">' + cache.map(function (c) {
-          return '<div class="ct-historico-row"><span>' + esc(c.tecidoNome) + ' — ' + esc(c.quantidade) + '</span><span>' + esc(fmtData(c.data)) + '</span></div>';
+          return '<div class="ct-historico-row"><span>' + esc(c.tecidoNome) + ' — ' + esc(c.quantidade) + ' — ' + fmtMoney(c.valorGasto) + '</span><span>' + esc(fmtData(c.data)) + '</span></div>';
         }).join('') + '</div>';
       }
     }
@@ -692,6 +724,7 @@
       '<button class="ct-icon-btn" data-del-roupa="' + roupa.id + '" aria-label="Excluir" title="Excluir">&#10005;</button>' +
       '</div>' +
       '</div>' +
+      '<div class="ct-roupa-total">Já consumido: <b>' + fmtMetros(roupa.totalConsumidoMetros || 0) + '</b> · <b>' + fmtMoney(roupa.totalConsumidoValor || 0) + '</b></div>' +
       rows +
       '<div id="ct-roupa-error-' + roupa.id + '" class="ct-error"></div>' +
       '<div class="ct-form-actions">' +
@@ -704,6 +737,15 @@
 
   function renderRoupasTab() {
     var html = '<div class="ct-toolbar"><button class="ct-btn" id="ct-open-new-roupa">+ Nova roupa</button></div>';
+
+    if (state.roupas.length > 0) {
+      var totalM = 0, totalV = 0;
+      state.roupas.forEach(function (r) {
+        totalM += toNumber(r.totalConsumidoMetros || 0) || 0;
+        totalV += toNumber(r.totalConsumidoValor || 0) || 0;
+      });
+      html += '<div class="ct-summary-bar"><span>Total consumido (todas as roupas): <b>' + fmtMetros(totalM) + '</b></span><span>Valor total gasto: <b>' + fmtMoney(totalV) + '</b></span></div>';
+    }
 
     if (state.roupas.length === 0) {
       html += '<div class="ct-empty"><b>Nenhuma roupa cadastrada</b>Crie uma roupa e vincule os tecidos que ela usa.</div>';
