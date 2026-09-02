@@ -1031,27 +1031,6 @@
             '</div>';
         }).join('');
 
-    var historico = '';
-    if (state.historicoOpen[roupa.id]) {
-      var cache = state.historicoCache[roupa.id];
-      if (!cache) {
-        historico = '<div class="ct-historico"><p style="font-size:12.5px;color:var(--ink-soft)">Carregando histórico...</p></div>';
-      } else if (cache.length === 0) {
-        historico = '<div class="ct-historico"><p style="font-size:12.5px;color:var(--ink-soft)">Nenhum consumo registrado ainda.</p></div>';
-      } else {
-        historico = '<div class="ct-historico">' + cache.map(function (c) {
-          var cancelado = c.status === 'cancelado';
-          var statusLabel = cancelado ? 'Cancelado' : 'Ativo';
-          var desfazerBtn = cancelado ? '' :
-            '<button class="ct-icon-btn" data-cancel-consumo="' + roupa.id + ':' + c.id + '" title="Desfazer consumo">&#8617;</button>';
-          return '<div class="ct-historico-row' + (cancelado ? ' ct-historico-cancelado' : '') + '">' +
-            '<span>' + esc(c.tecidoNome) + ' — ' + formatarNumero(c.quantidade) + ' m — ' + fmtMoney(c.valorGasto) + ' · ' + statusLabel + '</span>' +
-            '<span>' + esc(fmtData(c.data)) + desfazerBtn + '</span>' +
-            '</div>';
-        }).join('') + '</div>';
-      }
-    }
-
     return '' +
       '<div class="ct-roupa-card">' +
       '<div class="ct-card-top">' +
@@ -1068,8 +1047,33 @@
       '<button class="ct-btn" data-registrar-consumo="' + roupa.id + '">Registrar consumo</button>' +
       '<button class="ct-btn ct-btn-ghost" data-toggle-historico="' + roupa.id + '">' + (state.historicoOpen[roupa.id] ? 'Ocultar histórico' : 'Ver histórico') + '</button>' +
       '</div>' +
-      historico +
       '</div>';
+  }
+
+  // O histórico não fica dentro do box da roupa: é um painel separado, que ocupa a
+  // largura inteira da grade (grid-column: 1 / -1 no CSS). Assim o tamanho do card da
+  // roupa nunca muda quando o histórico abre/fecha, e não desalinha os cards vizinhos
+  // nem os próximos boxes que forem adicionados aqui no futuro.
+  function renderHistoricoPanel(roupa) {
+    var cache = state.historicoCache[roupa.id];
+    var body;
+    if (!cache) {
+      body = '<p class="ct-dash-empty">Carregando histórico...</p>';
+    } else if (cache.length === 0) {
+      body = '<p class="ct-dash-empty">Nenhum consumo registrado ainda.</p>';
+    } else {
+      body = cache.map(function (c) {
+        var cancelado = c.status === 'cancelado';
+        var statusLabel = cancelado ? 'Cancelado' : 'Ativo';
+        var desfazerBtn = cancelado ? '' :
+          '<button class="ct-icon-btn" data-cancel-consumo="' + roupa.id + ':' + c.id + '" title="Desfazer consumo">&#8617;</button>';
+        return '<div class="ct-historico-row' + (cancelado ? ' ct-historico-cancelado' : '') + '">' +
+          '<span>' + esc(c.tecidoNome) + ' — ' + formatarNumero(c.quantidade) + ' m — ' + fmtMoney(c.valorGasto) + ' · ' + statusLabel + '</span>' +
+          '<span>' + esc(fmtData(c.data)) + desfazerBtn + '</span>' +
+          '</div>';
+      }).join('');
+    }
+    return '<div class="ct-historico-panel"><h3>Histórico de consumo — ' + esc(roupa.nome) + '</h3>' + body + '</div>';
   }
 
   function renderRoupasTab() {
@@ -1088,7 +1092,12 @@
     if (state.roupas.length === 0) {
       html += '<div class="ct-empty"><b>Nenhuma roupa cadastrada</b>Crie uma roupa e vincule os tecidos que ela usa.</div>';
     } else {
-      html += '<div class="ct-grid">' + state.roupas.map(renderRoupaCard).join('') + '</div>';
+      var gridItems = state.roupas.map(function (r) {
+        var itemHtml = renderRoupaCard(r);
+        if (state.historicoOpen[r.id]) itemHtml += renderHistoricoPanel(r);
+        return itemHtml;
+      }).join('');
+      html += '<div class="ct-grid">' + gridItems + '</div>';
     }
 
     if (state.roupaFormOpen) html += renderRoupaForm();
