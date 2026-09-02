@@ -162,6 +162,11 @@ body {
 .ct-historico-cancelado { opacity: 0.55; text-decoration: line-through; }
 .ct-historico-cancelado .ct-icon-btn { display: none; }
 
+/* ---------- Moldes ---------- */
+
+.ct-molde-foto { width: 100%; height: 120px; object-fit: cover; border-radius: 6px; margin-bottom: 8px; background: var(--bg); }
+.ct-linha-faltando span:last-child { color: var(--danger); font-weight: 500; }
+
 /* ---------- Dashboard ---------- */
 
 .ct-stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px; margin-bottom: 22px; }
