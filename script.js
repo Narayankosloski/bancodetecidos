@@ -981,7 +981,7 @@
             '</span>' +
             '<span class="ct-consumo-col">' +
             '<input class="ct-consumo-input" data-key="' + esc(key) + '" data-valorunit="' + valorUnitario + '" value="' + esc(val) + '" placeholder="0" />' +
-            '<span class="ct-consumo-custo" data-costfor="' + esc(key) + '">' + fmtMoney(custoAtual) + '</span>' +
+            '<span class="ct-consumo-custo" data-costfor="' + esc(key) + '">' + fmtMoney(c.valorGasto) + '</span>' +
             '</span>' +
             '</div>';
         }).join('');
