@@ -973,7 +973,7 @@
           var val = state.consumoDraft[key] !== undefined ? state.consumoDraft[key] : '';
           var valorUnitario = toNumber(it.valor);
           if (isNaN(valorUnitario)) valorUnitario = 0;
-          var custoAtual = isNaN(toNumber(val)) ? 0 : toNumber(val) * valorUnitario;
+          var custoAtual = Math.round(r.u.qty * r.valorUnitario * 100) / 100;
           var consumidoNestaRoupa = toNumber(consumoPorTecido[it.id]) || 0;
           return '<div class="ct-roupa-tecido-row">' +
             '<span class="ct-roupa-tecido-name">' + esc(it.nome) +
@@ -981,7 +981,7 @@
             '</span>' +
             '<span class="ct-consumo-col">' +
             '<input class="ct-consumo-input" data-key="' + esc(key) + '" data-valorunit="' + valorUnitario + '" value="' + esc(val) + '" placeholder="0" />' +
-            '<span class="ct-consumo-custo" data-costfor="' + esc(key) + '">' + fmtMoney(c.valorGasto) + '</span>' +
+            '<span class="ct-consumo-custo" data-costfor="' + esc(key) + '">' + fmtMoney(custoAtual) + '</span>' +
             '</span>' +
             '</div>';
         }).join('');
