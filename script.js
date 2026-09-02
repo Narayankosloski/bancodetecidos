@@ -195,7 +195,13 @@
     var btn = document.getElementById('ct-google-login');
     if (btn) btn.addEventListener('click', function () {
       var provider = new firebase.auth.GoogleAuthProvider();
-      auth.signInWithRedirect(provider).catch(function (err) {
+      // signInWithPopup em vez de signInWithRedirect: o redirect depende de storage
+      // compartilhado entre o domínio do site e o authDomain (*.firebaseapp.com), e
+      // navegadores com bloqueio de storage de terceiros (Chrome sem cookies de
+      // terceiros, Safari, Brave, extensões de privacidade) descartam esse fluxo
+      // silenciosamente — sem erro no console, só "abre e fecha". O popup roda tudo
+      // na mesma janela e evita esse problema.
+      auth.signInWithPopup(provider).catch(function (err) {
         console.error(err);
         var root2 = document.getElementById('ct-root');
         if (root2) root2.innerHTML += '<p class="ct-error" style="text-align:center">Não foi possível entrar (' + esc(err.code || err.message) + '). Tente novamente.</p>';
@@ -973,7 +979,7 @@
           var val = state.consumoDraft[key] !== undefined ? state.consumoDraft[key] : '';
           var valorUnitario = toNumber(it.valor);
           if (isNaN(valorUnitario)) valorUnitario = 0;
-          var custoAtual = Math.round(r.u.qty * r.valorUnitario * 100) / 100;
+          var custoAtual = isNaN(toNumber(val)) ? 0 : toNumber(val) * valorUnitario;
           var consumidoNestaRoupa = toNumber(consumoPorTecido[it.id]) || 0;
           return '<div class="ct-roupa-tecido-row">' +
             '<span class="ct-roupa-tecido-name">' + esc(it.nome) +
