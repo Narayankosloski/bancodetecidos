@@ -10,10 +10,16 @@
 </head>
 <body>
 <div id="catalogo-app">
-  <h1 class="ct-h1">Catálogo de tecidos</h1>
-  <p class="ct-sub">Seus itens ficam salvos automaticamente na sua conta Google.</p>
-  <div id="ct-authbar"></div>
-  <div id="ct-root"><div class="ct-loading">Carregando...</div></div>
+  <div class="ct-shell">
+    <aside class="ct-sidebar">
+      <div class="ct-brand"><span class="ct-brand-dot"></span>Catálogo de tecidos</div>
+      <nav class="ct-nav" id="ct-nav"></nav>
+      <div class="ct-sidebar-bottom" id="ct-authbar"></div>
+    </aside>
+    <main class="ct-content">
+      <div id="ct-root"><div class="ct-loading">Carregando...</div></div>
+    </main>
+  </div>
 </div>
 
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>

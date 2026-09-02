@@ -24,6 +24,25 @@
   var EMPTY_DRAFT = { nome: '', categoria: '', quantidade: '', valor: '', estoqueMinimo: '', marca: '', tipoModelo: '', tamanho: '', corEstampa: '' };
   var ESTOQUE_MINIMO_PADRAO = 0; // usado quando o tecido antigo não possui esse campo
 
+  // Cores editáveis do site. Ficam salvas em usuarios/{uid}.tema e são aplicadas como
+  // variáveis CSS em #catalogo-app, então mudam tudo que já usa var(--thread) etc.
+  var TEMA_PADRAO = {
+    thread: '#B23A2E',
+    indigo: '#3A4A6B',
+    mustard: '#B9812A',
+    sage: '#5C6B4E',
+    bg: '#EDE6D8',
+    surface: '#FBF8F2',
+    ink: '#2B2419'
+  };
+
+  var NAV_ITEMS = [
+    { key: 'dashboard', label: 'Dashboard', icon: '&#9635;' },
+    { key: 'tecidos', label: 'Tecidos', icon: '&#9986;' },
+    { key: 'roupas', label: 'Roupas', icon: '&#128085;' },
+    { key: 'config', label: 'Configurações', icon: '&#9881;' }
+  ];
+
   var state = {
     items: [],
     categories: [],
@@ -38,9 +57,10 @@
     draft: null,
     dataError: null,
 
-    activeTab: 'tecidos',
+    activeTab: 'dashboard',
     entradaOpenId: null,
     entradaDraft: '',
+    tema: Object.assign({}, TEMA_PADRAO),
 
     roupas: [],
     roupasLoaded: false,
@@ -216,6 +236,9 @@
     if (unsubRoupas) { unsubRoupas(); unsubRoupas = null; }
     renderAuthBar();
 
+    var shell = document.querySelector('.ct-shell');
+    if (shell) shell.classList.toggle('ct-shell-noauth', !user);
+
     if (user) {
       state.loaded = false;
       state.roupasLoaded = false;
@@ -227,6 +250,8 @@
 
       unsubUser = userRef.onSnapshot(function (doc) {
         state.categories = (doc.exists && doc.data().categorias) || [];
+        state.tema = Object.assign({}, TEMA_PADRAO, (doc.exists && doc.data().tema) || {});
+        applyTema(state.tema);
         state.loaded = true;
         state.dataError = null;
         render();
@@ -275,6 +300,10 @@
       state.consumoDraft = {};
       state.loaded = true;
       state.roupasLoaded = true;
+      state.tema = Object.assign({}, TEMA_PADRAO);
+      applyTema(state.tema);
+      var nav = document.getElementById('ct-nav');
+      if (nav) nav.innerHTML = '';
       renderLoginScreen();
     }
   });
@@ -285,6 +314,23 @@
     if (!userRef) return;
     userRef.set({ categorias: state.categories }, { merge: true }).catch(function (e) {
       console.error('Erro ao salvar categorias', e);
+    });
+  }
+
+  // ---------- Tema (cores editáveis, salvas por conta) ----------
+
+  function applyTema(tema) {
+    var app = document.getElementById('catalogo-app');
+    if (!app) return;
+    Object.keys(TEMA_PADRAO).forEach(function (key) {
+      app.style.setProperty('--' + key, (tema && tema[key]) || TEMA_PADRAO[key]);
+    });
+  }
+
+  function saveTema() {
+    if (!userRef) return;
+    userRef.set({ tema: state.tema }, { merge: true }).catch(function (e) {
+      console.error('Erro ao salvar tema', e);
     });
   }
 
@@ -902,16 +948,9 @@
     return html;
   }
 
-  function renderTabs() {
-    return '<div class="ct-tabs">' +
-      '<div class="ct-tab' + (state.activeTab === 'tecidos' ? ' active' : '') + '" data-tab="tecidos">Tecidos</div>' +
-      '<div class="ct-tab' + (state.activeTab === 'roupas' ? ' active' : '') + '" data-tab="roupas">Roupas</div>' +
-      '</div>';
-  }
-
   function renderTecidosTab() {
     var items = filteredItems();
-    var html = '';
+    var html = '<div class="ct-page-header"><h2>Tecidos</h2><p>Seu estoque de tecidos, linhas e aviamentos.</p></div>';
     html += '<div class="ct-toolbar">' +
       '<input class="ct-search" id="ct-search-input" placeholder="Buscar por nome, marca ou categoria" value="' + esc(state.search) + '" />' +
       '<button class="ct-btn" id="ct-open-new">+ Novo item</button>' +
@@ -1034,7 +1073,8 @@
   }
 
   function renderRoupasTab() {
-    var html = '<div class="ct-toolbar"><button class="ct-btn" id="ct-open-new-roupa">+ Nova roupa</button></div>';
+    var html = '<div class="ct-page-header"><h2>Roupas</h2><p>Peças cadastradas e consumo de tecido em cada uma.</p></div>';
+    html += '<div class="ct-toolbar"><button class="ct-btn" id="ct-open-new-roupa">+ Nova roupa</button></div>';
 
     if (state.roupas.length > 0) {
       var totalM = 0, totalV = 0;
@@ -1055,11 +1095,140 @@
     return html;
   }
 
+  // ---------- Sidebar (navegação) ----------
+
+  function renderSidebarNav() {
+    return NAV_ITEMS.map(function (item) {
+      return '<div class="ct-nav-item' + (state.activeTab === item.key ? ' active' : '') + '" data-tab="' + item.key + '">' +
+        '<span class="ct-nav-icon">' + item.icon + '</span><span>' + item.label + '</span>' +
+        '</div>';
+    }).join('');
+  }
+
+  function attachSidebarEvents() {
+    var nav = document.getElementById('ct-nav');
+    if (!nav) return;
+    nav.querySelectorAll('[data-tab]').forEach(function (el) {
+      el.addEventListener('click', function () {
+        state.activeTab = el.getAttribute('data-tab');
+        render();
+      });
+    });
+  }
+
+  // ---------- Dashboard ----------
+
+  function statCard(label, value, accent) {
+    return '<div class="ct-stat-card">' +
+      '<div class="ct-stat-label">' + esc(label) + '</div>' +
+      '<div class="ct-stat-value' + (accent ? ' ct-accent' : '') + '">' + esc(value) + '</div>' +
+      '</div>';
+  }
+
+  function renderDashboardTab() {
+    var totalMetros = 0, totalValorEstoque = 0;
+    var porCategoria = {};
+    state.items.forEach(function (it) {
+      var q = toNumber(it.quantidade); if (isNaN(q)) q = 0;
+      var v = toNumber(it.valor); if (isNaN(v)) v = 0;
+      totalMetros += q;
+      totalValorEstoque += q * v;
+      var cat = it.categoria || 'Sem categoria';
+      porCategoria[cat] = (porCategoria[cat] || 0) + q;
+    });
+
+    var totalConsumidoMetros = 0, totalConsumidoValor = 0;
+    state.roupas.forEach(function (r) {
+      totalConsumidoMetros += toNumber(r.totalConsumidoMetros) || 0;
+      totalConsumidoValor += toNumber(r.totalConsumidoValor) || 0;
+    });
+
+    var statCards = '<div class="ct-stat-grid">' +
+      statCard('Tecidos cadastrados', state.items.length) +
+      statCard('Em estoque', fmtMetros(totalMetros)) +
+      statCard('Valor em estoque', fmtMoney(totalValorEstoque), true) +
+      statCard('Roupas cadastradas', state.roupas.length) +
+      statCard('Consumido no total', fmtMetros(totalConsumidoMetros)) +
+      statCard('Gasto total em consumo', fmtMoney(totalConsumidoValor), true) +
+      '</div>';
+
+    var alertas = state.items
+      .filter(function (it) { return obterStatusEstoque(it).key !== 'normal'; })
+      .sort(function (a, b) { return toNumber(a.quantidade) - toNumber(b.quantidade); })
+      .slice(0, 6);
+
+    var alertasHtml = alertas.length === 0
+      ? '<p class="ct-dash-empty">Nenhum tecido com estoque baixo ou zerado.</p>'
+      : alertas.map(function (it) {
+          var s = obterStatusEstoque(it);
+          return '<div class="ct-dash-alert-row">' +
+            '<span><span class="ct-stock-dot ct-stock-' + s.key + '" style="display:inline-block;margin-right:6px"></span>' + esc(it.nome) + '</span>' +
+            '<span>' + formatarNumero(it.quantidade) + ' m</span>' +
+            '</div>';
+        }).join('');
+
+    var categorias = Object.keys(porCategoria);
+    var maxCat = categorias.reduce(function (m, c) { return Math.max(m, porCategoria[c]); }, 0);
+    var categoriaRows = categorias.length === 0
+      ? '<p class="ct-dash-empty">Cadastre tecidos para ver a distribuição por categoria.</p>'
+      : categorias.sort(function (a, b) { return porCategoria[b] - porCategoria[a]; }).map(function (cat) {
+          var cc = catColor(cat);
+          var pct = maxCat > 0 ? Math.round((porCategoria[cat] / maxCat) * 100) : 0;
+          return '<div class="ct-bar-row">' +
+            '<span>' + esc(cat) + '</span>' +
+            '<span class="ct-bar-track"><span class="ct-bar-fill" style="width:' + pct + '%;background:' + cc.color + '"></span></span>' +
+            '<span class="ct-bar-value">' + formatarNumero(porCategoria[cat]) + ' m</span>' +
+            '</div>';
+        }).join('');
+
+    return '' +
+      '<div class="ct-page-header"><h2>Dashboard</h2><p>Visão geral do seu estoque de tecidos e roupas.</p></div>' +
+      statCards +
+      '<div class="ct-dash-section"><h3>Alertas de estoque</h3>' + alertasHtml + '</div>' +
+      '<div class="ct-dash-section"><h3>Estoque por categoria</h3>' + categoriaRows + '</div>';
+  }
+
+  // ---------- Configurações (tema) ----------
+
+  var TEMA_CAMPOS = [
+    { key: 'thread', label: 'Cor de destaque' },
+    { key: 'indigo', label: 'Cor secundária' },
+    { key: 'mustard', label: 'Cor de aviso' },
+    { key: 'sage', label: 'Cor de sucesso' },
+    { key: 'bg', label: 'Fundo da página' },
+    { key: 'surface', label: 'Fundo dos cards' },
+    { key: 'ink', label: 'Cor do texto' }
+  ];
+
+  function renderConfigTab() {
+    var t = state.tema || TEMA_PADRAO;
+    var swatches = TEMA_CAMPOS.map(function (c) {
+      return '<div class="ct-theme-swatch">' +
+        '<label>' + c.label + '</label>' +
+        '<input type="color" class="ct-tema-input" data-tema-key="' + c.key + '" value="' + esc(t[c.key] || TEMA_PADRAO[c.key]) + '" />' +
+        '</div>';
+    }).join('');
+
+    return '' +
+      '<div class="ct-page-header"><h2>Configurações</h2><p>Personalize as cores do catálogo. Fica salvo na sua conta e vale para qualquer aparelho.</p></div>' +
+      '<div class="ct-dash-section">' +
+      '<h3>Aparência</h3>' +
+      '<div class="ct-theme-grid">' + swatches + '</div>' +
+      '<div class="ct-form-actions"><button class="ct-btn ct-btn-ghost" id="ct-tema-restaurar">Restaurar cores padrão</button></div>' +
+      '</div>';
+  }
+
   function render() {
     if (!currentUser) return;
     syncDraftFromDOM();
     syncRoupaDraftFromDOM();
     syncConsumoDraftFromDOM();
+
+    var nav = document.getElementById('ct-nav');
+    if (nav) {
+      nav.innerHTML = renderSidebarNav();
+      attachSidebarEvents();
+    }
 
     var root = document.getElementById('ct-root');
     if (!state.loaded || !state.roupasLoaded) { root.innerHTML = '<div class="ct-loading">Carregando catálogo...</div>'; return; }
@@ -1072,8 +1241,11 @@
       return;
     }
 
-    var html = renderTabs();
-    html += state.activeTab === 'roupas' ? renderRoupasTab() : renderTecidosTab();
+    var html;
+    if (state.activeTab === 'roupas') html = renderRoupasTab();
+    else if (state.activeTab === 'config') html = renderConfigTab();
+    else if (state.activeTab === 'dashboard') html = renderDashboardTab();
+    else html = renderTecidosTab();
 
     root.innerHTML = html;
     attachEvents();
@@ -1086,13 +1258,6 @@
 
   function attachEvents() {
     var root = document.getElementById('ct-root');
-
-    root.querySelectorAll('[data-tab]').forEach(function (el) {
-      el.addEventListener('click', function () {
-        state.activeTab = el.getAttribute('data-tab');
-        render();
-      });
-    });
 
     var searchInput = document.getElementById('ct-search-input');
     if (searchInput) {
@@ -1195,5 +1360,22 @@
 
     var rNome = document.getElementById('ct-r-nome');
     if (rNome) rNome.addEventListener('input', function (e) { if (state.roupaDraft) state.roupaDraft.nome = e.target.value; });
+
+    // ---- Configurações (tema) ----
+    root.querySelectorAll('.ct-tema-input').forEach(function (el) {
+      el.addEventListener('input', function (e) {
+        var key = e.target.getAttribute('data-tema-key');
+        state.tema[key] = e.target.value;
+        applyTema(state.tema);
+      });
+      el.addEventListener('change', function () { saveTema(); });
+    });
+    var restaurarTema = document.getElementById('ct-tema-restaurar');
+    if (restaurarTema) restaurarTema.addEventListener('click', function () {
+      state.tema = Object.assign({}, TEMA_PADRAO);
+      applyTema(state.tema);
+      saveTema();
+      render();
+    });
   }
 })();
