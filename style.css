@@ -104,8 +104,9 @@ body {
 .ct-consumo-input { width: 84px; padding: 7px 8px; border: 1px solid var(--line); border-radius: 6px; font-family: 'IBM Plex Mono', monospace; font-size: 13px; text-align: right; }
 .ct-consumo-input:focus { outline: none; border-color: var(--thread); }
 
-.ct-historico { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line); }
-.ct-historico-row { display: flex; justify-content: space-between; font-size: 12px; color: var(--ink-soft); padding: 3px 0; }
+.ct-historico { margin-top: 12px; padding: 10px 12px; border-radius: 8px; background: var(--bg); border: 1px solid var(--line); }
+.ct-historico-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; font-size: 12px; color: var(--ink-soft); padding: 6px 0; border-bottom: 1px solid var(--line); }
+.ct-historico-row:last-child { border-bottom: none; }
 
 .ct-summary-bar { display: flex; gap: 18px; flex-wrap: wrap; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; font-size: 13px; color: var(--ink-soft); }
 .ct-summary-bar b { color: var(--thread-dark); font-family: 'IBM Plex Mono', monospace; font-weight: 500; }
@@ -114,10 +115,13 @@ body {
 
 .ct-stock-row { display: flex; align-items: center; gap: 6px; font-size: 12px; margin: 2px 0 8px; }
 .ct-stock-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
-.ct-stock-dot.ct-stock-normal, .ct-stock-label.ct-stock-normal { background: var(--sage); color: var(--sage); }
-.ct-stock-dot.ct-stock-baixo, .ct-stock-label.ct-stock-baixo { background: var(--mustard); color: var(--mustard); }
-.ct-stock-dot.ct-stock-sem, .ct-stock-label.ct-stock-sem { background: var(--danger); color: var(--danger); }
+.ct-stock-dot.ct-stock-normal { background: var(--sage); }
+.ct-stock-dot.ct-stock-baixo { background: var(--mustard); }
+.ct-stock-dot.ct-stock-sem { background: var(--danger); }
 .ct-stock-label { font-weight: 500; }
+.ct-stock-label.ct-stock-normal { color: var(--sage); }
+.ct-stock-label.ct-stock-baixo { color: var(--mustard); }
+.ct-stock-label.ct-stock-sem { color: var(--danger); }
 
 .ct-entrada-form { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line); }
 
