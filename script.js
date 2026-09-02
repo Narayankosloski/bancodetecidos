@@ -73,12 +73,14 @@
     historicoCache: {},
 
     // Moldes: catálogo global (cadastrado no site admin), só leitura aqui.
-    // Cada molde diz de quais materiais precisa; comparamos com o estoque
-    // do usuário logado (state.items) casando pelo nome do material.
+    // Cada molde diz de quais materiais precisa. A pessoa escolhe manualmente,
+    // em cada material, qual tecido do próprio estoque vai usar (moldeSelecao),
+    // pra poder fazer a mesma camisa com "qualquer tecido" que ela tenha.
     moldes: [],
     moldesLoaded: false,
     moldeFilterCat: null,
-    moldeSearch: ''
+    moldeSearch: '',
+    moldeSelecao: {} // { [moldeId]: { [indiceDoMaterial]: tecidoId } }
   };
 
   var currentUser = null;
@@ -322,6 +324,7 @@
       state.roupas = [];
       state.moldes = [];
       state.moldesLoaded = false;
+      state.moldeSelecao = {};
       state.formOpen = false;
       state.draft = null;
       state.roupaFormOpen = false;
@@ -1138,35 +1141,80 @@
   // é global e o estoque é por conta, a comparação casa pelo NOME do material com os
   // tecidos/itens do usuário logado (busca por substring, sem exigir IDs iguais).
 
+  // Sugestão inicial: primeiro tecido do estoque cujo nome bate com o nome do material
+  // do molde (substring nos dois sentidos). Só usada pra pré-selecionar o <select> antes
+  // da pessoa escolher manualmente — ela pode trocar por qualquer outro tecido do estoque.
+  function sugerirTecidoParaMaterial(nomeMaterial) {
+    var termo = String(nomeMaterial || '').toLowerCase().trim();
+    if (!termo) return '';
+    var achado = state.items.find(function (it) {
+      var nomeIt = String(it.nome || '').toLowerCase();
+      return nomeIt.indexOf(termo) > -1 || termo.indexOf(nomeIt) > -1;
+    });
+    return achado ? achado.id : '';
+  }
+
   function calcularDisponibilidadeMolde(molde) {
     var materiais = molde.materiais || [];
-    var linhas = materiais.map(function (m) {
+    var selecao = state.moldeSelecao[molde.id] || {};
+    var linhas = materiais.map(function (m, idx) {
       var necessario = toNumber(m.quantidade) || 0;
-      var termo = String(m.nome || '').toLowerCase().trim();
-      var disponivel = 0;
-      if (termo) {
-        state.items.forEach(function (it) {
-          var nomeIt = String(it.nome || '').toLowerCase();
-          if (nomeIt.indexOf(termo) > -1 || termo.indexOf(nomeIt) > -1) {
-            disponivel += toNumber(it.quantidade) || 0;
-          }
-        });
-      }
-      return { nome: m.nome, unidade: m.unidade || '', necessario: necessario, disponivel: disponivel, ok: disponivel >= necessario };
+      var tecidoId = selecao[idx] !== undefined ? selecao[idx] : sugerirTecidoParaMaterial(m.nome);
+      var tecido = tecidoId ? state.items.find(function (it) { return it.id === tecidoId; }) : null;
+
+      var disponivel = tecido ? (toNumber(tecido.quantidade) || 0) : 0;
+      var valorUnit = tecido ? (toNumber(tecido.valor) || 0) : null;
+      var custo = tecido ? necessario * valorUnit : null;
+
+      return {
+        nome: m.nome, unidade: m.unidade || '', necessario: necessario,
+        tecidoId: tecidoId, tecidoNome: tecido ? tecido.nome : '',
+        disponivel: disponivel, ok: !!tecido && disponivel >= necessario,
+        custo: custo
+      };
     });
     var completo = linhas.length > 0 && linhas.every(function (l) { return l.ok; });
-    return { linhas: linhas, completo: completo };
+
+    var custoTotal = 0, custoConhecido = false, faltaEscolher = false;
+    linhas.forEach(function (l) {
+      if (l.custo !== null) { custoTotal += l.custo; custoConhecido = true; }
+      else if (l.necessario > 0) faltaEscolher = true;
+    });
+
+    return { linhas: linhas, completo: completo, custoTotal: custoTotal, custoConhecido: custoConhecido, faltaEscolher: faltaEscolher };
   }
 
   function renderMoldeCard(molde) {
     var disp = calcularDisponibilidadeMolde(molde);
     var statusKey = disp.linhas.length === 0 ? 'baixo' : (disp.completo ? 'normal' : 'sem');
-    var statusLabel = disp.linhas.length === 0 ? 'Sem lista de materiais' : (disp.completo ? 'Você tem tudo' : 'Faltam materiais');
-    var materiaisHtml = disp.linhas.map(function (l) {
-      return '<div class="ct-card-row' + (l.ok ? '' : ' ct-linha-faltando') + '"><span>' + esc(l.nome) + (l.unidade ? ' (' + esc(l.unidade) + ')' : '') + '</span>' +
-        '<span>' + formatarNumero(l.necessario) + ' / ' + formatarNumero(l.disponivel) + '</span></div>';
+    var statusLabel = disp.linhas.length === 0 ? 'Sem lista de materiais' : (disp.completo ? 'Você tem tudo' : (disp.faltaEscolher ? 'Escolha o tecido de cada material' : 'Faltam materiais'));
+
+    var itensOrdenados = state.items.slice().sort(function (a, b) { return a.nome.localeCompare(b.nome); });
+
+    var materiaisHtml = disp.linhas.map(function (l, idx) {
+      var options = '<option value="">Selecione o tecido...</option>' +
+        itensOrdenados.map(function (it) {
+          return '<option value="' + esc(it.id) + '"' + (it.id === l.tecidoId ? ' selected' : '') + '>' +
+            esc(it.nome) + ' (' + formatarNumero(it.quantidade) + ' disponível)' + '</option>';
+        }).join('');
+
+      return '<div class="ct-molde-mat-row">' +
+        '<div class="ct-molde-mat-top">' +
+        '<span>' + esc(l.nome) + (l.unidade ? ' · precisa de ' + formatarNumero(l.necessario) + ' ' + esc(l.unidade) : '') + '</span>' +
+        (l.tecidoId ? '<span class="' + (l.ok ? 'ct-stock-label ct-stock-normal' : 'ct-stock-label ct-stock-sem') + '">' + formatarNumero(l.disponivel) + ' disponível</span>' : '') +
+        '</div>' +
+        '<select class="ct-molde-mat-select" data-molde="' + esc(molde.id) + '" data-idx="' + idx + '">' + options + '</select>' +
+        '</div>';
     }).join('');
+
     var cc = catColor(molde.categoria || 'Molde');
+
+    var custoHtml = '';
+    if (disp.custoConhecido) {
+      custoHtml = '<div class="ct-card-row" style="border-top:1px solid var(--line);margin-top:6px;padding-top:8px">' +
+        '<span>' + (disp.completo ? 'Sai por (com os tecidos escolhidos)' : 'Custo estimado' + (disp.faltaEscolher ? ' (parcial — falta escolher tecido)' : '')) + '</span>' +
+        '<span class="ct-valor">' + fmtMoney(disp.custoTotal) + '</span></div>';
+    }
 
     return '' +
       '<div class="ct-card">' +
@@ -1178,6 +1226,7 @@
       (molde.descricao ? '<p style="font-size:12.5px;color:var(--ink-soft);margin:0 0 8px">' + esc(molde.descricao) + '</p>' : '') +
       '<div class="ct-stock-row"><span class="ct-stock-dot ct-stock-' + statusKey + '"></span><span class="ct-stock-label ct-stock-' + statusKey + '">' + statusLabel + '</span></div>' +
       materiaisHtml +
+      custoHtml +
       '</div>' +
       '</div>';
   }
@@ -1507,6 +1556,15 @@
       el.addEventListener('click', function () {
         var v = el.getAttribute('data-moldechip');
         state.moldeFilterCat = v ? v : null;
+        render();
+      });
+    });
+    root.querySelectorAll('.ct-molde-mat-select').forEach(function (el) {
+      el.addEventListener('change', function (e) {
+        var moldeId = el.getAttribute('data-molde');
+        var idx = el.getAttribute('data-idx');
+        if (!state.moldeSelecao[moldeId]) state.moldeSelecao[moldeId] = {};
+        state.moldeSelecao[moldeId][idx] = e.target.value;
         render();
       });
     });
