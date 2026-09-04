@@ -1,0 +1,61 @@
+name: Build Android APK
+
+on:
+  push:
+    branches:
+      - main
+
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Baixar código
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Configurar Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Instalar dependências
+        run: npm ci
+
+      - name: Preparar arquivos do site
+        run: npm run prepare-web
+
+      - name: Sincronizar Capacitor
+        run: npx cap sync android
+
+      - name: Configurar Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Instalar componentes Android
+        run: |
+          sdkmanager "platform-tools"
+          sdkmanager "platforms;android-36"
+          sdkmanager "build-tools;35.0.0"
+
+      - name: Aceitar licenças
+        run: yes | sdkmanager --licenses || true
+
+      - name: Dar permissão ao Gradle
+        run: chmod +x android/gradlew
+
+      - name: Gerar APK
+        run: ./android/gradlew assembleDebug
+
+      - name: Salvar APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: bancodetecidos-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
