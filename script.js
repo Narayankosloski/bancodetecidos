@@ -40,6 +40,7 @@
     { key: 'dashboard', label: 'Dashboard', icon: '&#9635;' },
     { key: 'tecidos', label: 'Tecidos', icon: '&#9986;' },
     { key: 'roupas', label: 'Roupas', icon: '&#128085;' },
+    { key: 'moldes', label: 'Moldes', icon: '&#128204;' },
     { key: 'config', label: 'Configurações', icon: '&#9881;' }
   ];
 
@@ -69,7 +70,17 @@
     roupaDraft: null,
     consumoDraft: {},
     historicoOpen: {},
-    historicoCache: {}
+    historicoCache: {},
+
+    // Moldes: catálogo global (cadastrado no site admin), só leitura aqui.
+    // Cada molde diz de quais materiais precisa. A pessoa escolhe manualmente,
+    // em cada material, qual tecido do próprio estoque vai usar (moldeSelecao),
+    // pra poder fazer a mesma camisa com "qualquer tecido" que ela tenha.
+    moldes: [],
+    moldesLoaded: false,
+    moldeFilterCat: null,
+    moldeSearch: '',
+    moldeSelecao: {} // { [moldeId]: { [indiceDoMaterial]: tecidoId } }
   };
 
   var currentUser = null;
@@ -77,9 +88,11 @@
   var itemsRef = null;
   var roupasRef = null;
   var movimentacoesRef = null;
+  var moldesRef = null;
   var unsubUser = null;
   var unsubItems = null;
   var unsubRoupas = null;
+  var unsubMoldes = null;
 
   function catColor(cat) {
     var idx = 0;
@@ -234,6 +247,7 @@
     if (unsubUser) { unsubUser(); unsubUser = null; }
     if (unsubItems) { unsubItems(); unsubItems = null; }
     if (unsubRoupas) { unsubRoupas(); unsubRoupas = null; }
+    if (unsubMoldes) { unsubMoldes(); unsubMoldes = null; }
     renderAuthBar();
 
     var shell = document.querySelector('.ct-shell');
@@ -247,6 +261,9 @@
       itemsRef = userRef.collection('itens');
       roupasRef = userRef.collection('roupas');
       movimentacoesRef = userRef.collection('movimentacoes');
+      // 'moldes' é uma coleção global (fora de usuarios/{uid}): o catálogo é o
+      // mesmo pra qualquer conta, e só é editado pelo site admin.
+      moldesRef = db.collection('moldes');
 
       unsubUser = userRef.onSnapshot(function (doc) {
         state.categories = (doc.exists && doc.data().categorias) || [];
@@ -285,14 +302,29 @@
         state.dataError = err.code || err.message;
         render();
       });
+
+      unsubMoldes = moldesRef.where('ativo', '==', true).onSnapshot(function (snap) {
+        state.moldes = snap.docs.map(function (d) { return Object.assign({ id: d.id }, d.data()); });
+        state.moldesLoaded = true;
+        render();
+      }, function (err) {
+        console.error('Erro ao ler moldes', err);
+        state.moldes = [];
+        state.moldesLoaded = true;
+        render();
+      });
     } else {
       userRef = null;
       itemsRef = null;
       roupasRef = null;
       movimentacoesRef = null;
+      moldesRef = null;
       state.items = [];
       state.categories = [];
       state.roupas = [];
+      state.moldes = [];
+      state.moldesLoaded = false;
+      state.moldeSelecao = {};
       state.formOpen = false;
       state.draft = null;
       state.roupaFormOpen = false;
@@ -1104,6 +1136,144 @@
     return html;
   }
 
+  // ---------- Moldes (catálogo global, somente leitura aqui — cadastro é no site admin) ----------
+  // Cada molde tem uma lista "materiais": [{ nome, quantidade, unidade }]. Como o catálogo
+  // é global e o estoque é por conta, a comparação casa pelo NOME do material com os
+  // tecidos/itens do usuário logado (busca por substring, sem exigir IDs iguais).
+
+  // Sugestão inicial: primeiro tecido do estoque cujo nome bate com o nome do material
+  // do molde (substring nos dois sentidos). Só usada pra pré-selecionar o <select> antes
+  // da pessoa escolher manualmente — ela pode trocar por qualquer outro tecido do estoque.
+  function sugerirTecidoParaMaterial(nomeMaterial) {
+    var termo = String(nomeMaterial || '').toLowerCase().trim();
+    if (!termo) return '';
+    var achado = state.items.find(function (it) {
+      var nomeIt = String(it.nome || '').toLowerCase();
+      return nomeIt.indexOf(termo) > -1 || termo.indexOf(nomeIt) > -1;
+    });
+    return achado ? achado.id : '';
+  }
+
+  function calcularDisponibilidadeMolde(molde) {
+    var materiais = molde.materiais || [];
+    var selecao = state.moldeSelecao[molde.id] || {};
+    var linhas = materiais.map(function (m, idx) {
+      var necessario = toNumber(m.quantidade) || 0;
+      var tecidoId = selecao[idx] !== undefined ? selecao[idx] : sugerirTecidoParaMaterial(m.nome);
+      var tecido = tecidoId ? state.items.find(function (it) { return it.id === tecidoId; }) : null;
+
+      var disponivel = tecido ? (toNumber(tecido.quantidade) || 0) : 0;
+      var valorUnit = tecido ? (toNumber(tecido.valor) || 0) : null;
+      var custo = tecido ? necessario * valorUnit : null;
+
+      return {
+        nome: m.nome, unidade: m.unidade || '', necessario: necessario,
+        tecidoId: tecidoId, tecidoNome: tecido ? tecido.nome : '',
+        disponivel: disponivel, ok: !!tecido && disponivel >= necessario,
+        custo: custo
+      };
+    });
+    var completo = linhas.length > 0 && linhas.every(function (l) { return l.ok; });
+
+    var custoTotal = 0, custoConhecido = false, faltaEscolher = false;
+    linhas.forEach(function (l) {
+      if (l.custo !== null) { custoTotal += l.custo; custoConhecido = true; }
+      else if (l.necessario > 0) faltaEscolher = true;
+    });
+
+    return { linhas: linhas, completo: completo, custoTotal: custoTotal, custoConhecido: custoConhecido, faltaEscolher: faltaEscolher };
+  }
+
+  function renderMoldeCard(molde) {
+    var disp = calcularDisponibilidadeMolde(molde);
+    var statusKey = disp.linhas.length === 0 ? 'baixo' : (disp.completo ? 'normal' : 'sem');
+    var statusLabel = disp.linhas.length === 0 ? 'Sem lista de materiais' : (disp.completo ? 'Você tem tudo' : (disp.faltaEscolher ? 'Escolha o tecido de cada material' : 'Faltam materiais'));
+
+    var itensOrdenados = state.items.slice().sort(function (a, b) { return a.nome.localeCompare(b.nome); });
+
+    var materiaisHtml = disp.linhas.map(function (l, idx) {
+      var options = '<option value="">Selecione o tecido...</option>' +
+        itensOrdenados.map(function (it) {
+          return '<option value="' + esc(it.id) + '"' + (it.id === l.tecidoId ? ' selected' : '') + '>' +
+            esc(it.nome) + ' (' + formatarNumero(it.quantidade) + ' disponível)' + '</option>';
+        }).join('');
+
+      return '<div class="ct-molde-mat-row">' +
+        '<div class="ct-molde-mat-top">' +
+        '<span>' + esc(l.nome) + (l.unidade ? ' · precisa de ' + formatarNumero(l.necessario) + ' ' + esc(l.unidade) : '') + '</span>' +
+        (l.tecidoId ? '<span class="' + (l.ok ? 'ct-stock-label ct-stock-normal' : 'ct-stock-label ct-stock-sem') + '">' + formatarNumero(l.disponivel) + ' disponível</span>' : '') +
+        '</div>' +
+        '<select class="ct-molde-mat-select" data-molde="' + esc(molde.id) + '" data-idx="' + idx + '">' + options + '</select>' +
+        '</div>';
+    }).join('');
+
+    var cc = catColor(molde.categoria || 'Molde');
+
+    var custoHtml = '';
+    if (disp.custoConhecido) {
+      custoHtml = '<div class="ct-card-row" style="border-top:1px solid var(--line);margin-top:6px;padding-top:8px">' +
+        '<span>' + (disp.completo ? 'Sai por (com os tecidos escolhidos)' : 'Custo estimado' + (disp.faltaEscolher ? ' (parcial — falta escolher tecido)' : '')) + '</span>' +
+        '<span class="ct-valor">' + fmtMoney(disp.custoTotal) + '</span></div>';
+    }
+
+    return '' +
+      '<div class="ct-card">' +
+      '<div class="ct-pinked" style="--tag-color:' + cc.color + '"></div>' +
+      '<div class="ct-card-body">' +
+      (molde.fotoUrl ? '<img class="ct-molde-foto" src="' + esc(molde.fotoUrl) + '" alt="" />' : '') +
+      '<div class="ct-card-top"><div class="ct-card-name">' + esc(molde.nome) + '</div></div>' +
+      (molde.categoria ? '<span class="ct-tag" style="--tag-color:' + cc.color + ';--tag-bg:' + cc.bg + '">' + esc(molde.categoria) + '</span>' : '') +
+      (molde.descricao ? '<p style="font-size:12.5px;color:var(--ink-soft);margin:0 0 8px">' + esc(molde.descricao) + '</p>' : '') +
+      '<div class="ct-stock-row"><span class="ct-stock-dot ct-stock-' + statusKey + '"></span><span class="ct-stock-label ct-stock-' + statusKey + '">' + statusLabel + '</span></div>' +
+      materiaisHtml +
+      custoHtml +
+      '</div>' +
+      '</div>';
+  }
+
+  function moldeCategorias() {
+    var set = {};
+    state.moldes.forEach(function (m) { if (m.categoria) set[m.categoria] = true; });
+    return Object.keys(set).sort();
+  }
+
+  function filteredMoldes() {
+    return state.moldes.filter(function (m) {
+      if (state.moldeFilterCat && m.categoria !== state.moldeFilterCat) return false;
+      if (state.moldeSearch) {
+        var q = state.moldeSearch.toLowerCase();
+        var hay = ((m.nome || '') + ' ' + (m.categoria || '')).toLowerCase();
+        if (hay.indexOf(q) === -1) return false;
+      }
+      return true;
+    });
+  }
+
+  function renderMoldesTab() {
+    if (!state.moldesLoaded) return '<div class="ct-loading">Carregando moldes...</div>';
+
+    var cats = moldeCategorias();
+    var chips = '<div class="ct-chips">' +
+      '<div class="ct-chip' + (state.moldeFilterCat === null ? ' active' : '') + '" style="background:var(--line);color:var(--ink)" data-moldechip="">Todos</div>' +
+      cats.map(function (c) {
+        var cc = catColor(c);
+        return '<div class="ct-chip' + (state.moldeFilterCat === c ? ' active' : '') + '" style="background:' + cc.bg + ';color:' + cc.color + '" data-moldechip="' + esc(c) + '">' + esc(c) + '</div>';
+      }).join('') + '</div>';
+
+    var items = filteredMoldes();
+    var html = '<div class="ct-page-header"><h2>Moldes</h2><p>Escolha uma roupa e veja se você tem tecido e material suficiente. Catálogo cadastrado pelo site admin.</p></div>';
+    html += '<div class="ct-toolbar"><input class="ct-search" id="ct-molde-search-input" placeholder="Buscar molde" value="' + esc(state.moldeSearch) + '" /></div>';
+    html += chips;
+
+    if (items.length === 0) {
+      html += '<div class="ct-empty"><b>' + (state.moldes.length === 0 ? 'Nenhum molde publicado ainda' : 'Nada encontrado') + '</b>' +
+        (state.moldes.length === 0 ? 'Cadastre moldes pelo site admin.' : 'Tente outra busca ou categoria.') + '</div>';
+    } else {
+      html += '<div class="ct-grid">' + items.map(renderMoldeCard).join('') + '</div>';
+    }
+    return html;
+  }
+
   // ---------- Sidebar (navegação) ----------
 
   function renderSidebarNav() {
@@ -1252,6 +1422,7 @@
 
     var html;
     if (state.activeTab === 'roupas') html = renderRoupasTab();
+    else if (state.activeTab === 'moldes') html = renderMoldesTab();
     else if (state.activeTab === 'config') html = renderConfigTab();
     else if (state.activeTab === 'dashboard') html = renderDashboardTab();
     else html = renderTecidosTab();
@@ -1369,6 +1540,34 @@
 
     var rNome = document.getElementById('ct-r-nome');
     if (rNome) rNome.addEventListener('input', function (e) { if (state.roupaDraft) state.roupaDraft.nome = e.target.value; });
+
+    // ---- Moldes ----
+    var moldeSearch = document.getElementById('ct-molde-search-input');
+    if (moldeSearch) {
+      moldeSearch.addEventListener('input', function (e) {
+        state.moldeSearch = e.target.value;
+        var pos = e.target.selectionStart;
+        render();
+        var again = document.getElementById('ct-molde-search-input');
+        if (again) { again.focus(); again.setSelectionRange(pos, pos); }
+      });
+    }
+    root.querySelectorAll('[data-moldechip]').forEach(function (el) {
+      el.addEventListener('click', function () {
+        var v = el.getAttribute('data-moldechip');
+        state.moldeFilterCat = v ? v : null;
+        render();
+      });
+    });
+    root.querySelectorAll('.ct-molde-mat-select').forEach(function (el) {
+      el.addEventListener('change', function (e) {
+        var moldeId = el.getAttribute('data-molde');
+        var idx = el.getAttribute('data-idx');
+        if (!state.moldeSelecao[moldeId]) state.moldeSelecao[moldeId] = {};
+        state.moldeSelecao[moldeId][idx] = e.target.value;
+        render();
+      });
+    });
 
     // ---- Configurações (tema) ----
     root.querySelectorAll('.ct-tema-input').forEach(function (el) {

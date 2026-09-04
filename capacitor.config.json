@@ -1,0 +1,7 @@
+const config = {
+  appId: 'com.narayan.meuapp',
+  appName: 'bancodetecidos',
+  webDir: 'www'
+};
+
+export default config;

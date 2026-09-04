@@ -1,0 +1,27 @@
+{
+  "name": "bancodetecidos",
+  "version": "1.0.0",
+  "description": "",
+  "main": "script.js",
+  "scripts": {
+    "prepare-web": "node -e \"const fs=require('fs'); const path=require('path'); const files=fs.readdirSync('.').filter(f=>!['node_modules','android','www','.git','.github'].includes(f)); fs.rmSync('www',{recursive:true,force:true}); fs.mkdirSync('www'); for(const f of files){fs.cpSync(f,path.join('www',f),{recursive:true});}\"",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Narayankosloski/bancodetecidos.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/Narayankosloski/bancodetecidos/issues"
+  },
+  "homepage": "https://github.com/Narayankosloski/bancodetecidos#readme",
+  "dependencies": {
+    "@capacitor/android": "^8.5.1",
+    "@capacitor/cli": "^8.5.1",
+    "@capacitor/core": "^8.5.1"
+  }
+}
