@@ -40,7 +40,9 @@ jobs:
       - name: Dar permissão ao Gradle
         run: chmod +x android/gradlew
       - name: Gerar APK
-        run: ./gradlew -p android assembleDebug
+        run: |
+          cd android
+          ./gradlew assembleDebug
       - name: Salvar APK
         uses: actions/upload-artifact@v4
         with:
