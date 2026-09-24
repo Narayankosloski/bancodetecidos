@@ -1,3 +1,17 @@
+{
+  "appId": "seu.app.id.aqui",
+  "appName": "Catálogo de Tecidos",
+  "webDir": "www",
+  "server": {
+    "url": "https://seu-site-aqui.com"
+  },
+  "plugins": {
+    "FirebaseAuthentication": {
+      "skipNativeAuth": true,
+      "providers": ["google.com"]
+    }
+  }
+}
 const config = {
   appId: 'com.narayan.meuapp',
   appName: 'bancodetecidos',
