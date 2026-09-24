@@ -1,14 +1,13 @@
 (function () {
   var firebaseConfig = {
-    apiKey: "AIzaSyBBriPa_yCqb7kZtyJJ2XGtOp_DSCYCx0Q",
-    authDomain: "bancodetecidos-c3d2d.firebaseapp.com",
-    databaseURL: "https://bancodetecidos-c3d2d-default-rtdb.firebaseio.com",
-    projectId: "bancodetecidos-c3d2d",
-    storageBucket: "bancodetecidos-c3d2d.firebasestorage.app",
-    messagingSenderId: "534574467325",
-    appId: "1:534574467325:web:1ad5399163637660b25694",
-    measurementId: "G-24ZTWH1YZY"
-  };
+  apiKey: "AIzaSyB5HuNy4UcuFGAHubZS8b8aEo6pAhGPwNo",
+  authDomain: "bancodetecidos-511eb.firebaseapp.com",
+  projectId: "bancodetecidos-511eb",
+  storageBucket: "bancodetecidos-511eb.firebasestorage.app",
+  messagingSenderId: "207051802838",
+  appId: "1:207051802838:web:21ba8c9e38640fa1492177",
+  measurementId: "G-DX0HYP81XG"
+};
 
   firebase.initializeApp(firebaseConfig);
   var auth = firebase.auth();
