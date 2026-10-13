@@ -46,14 +46,59 @@ body {
 .ct-page-header h2 { font-family: 'Fraunces', serif; font-weight: 600; font-size: 22px; margin: 0 0 3px; letter-spacing: -0.01em; }
 .ct-page-header p { color: var(--ink-soft); font-size: 13px; margin: 0; }
 
+/* ---------- Menu mobile: mesma aba lateral do desktop, abrindo como gaveta ---------- */
+
+/* No desktop a barra superior e o fundo escuro não existem */
+.ct-topbar, .ct-backdrop { display: none; }
+
 @media (max-width: 860px) {
   .ct-shell { flex-direction: column; }
-  .ct-sidebar { width: 100%; height: auto; position: relative; flex-direction: row; align-items: center; padding: 12px 16px; gap: 12px; overflow-x: auto; }
-  .ct-brand { margin: 0; }
-  .ct-nav { flex-direction: row; flex: none; }
-  .ct-sidebar-bottom { margin-top: 0; padding-top: 0; border-top: none; border-left: 1px solid var(--line); padding-left: 12px; margin-left: auto; }
-  .ct-sidebar .ct-authbar { flex-direction: row; align-items: center; }
-  .ct-sidebar .ct-authbar .ct-btn-ghost { width: auto; }
+
+  /* Barra superior fixa com o botão que abre o menu */
+  .ct-topbar {
+    display: flex; align-items: center; gap: 12px;
+    position: sticky; top: 0; z-index: 30;
+    padding: 10px 14px; padding-top: calc(10px + env(safe-area-inset-top, 0px));
+    background: var(--bg); border-bottom: 1px solid var(--line);
+  }
+  .ct-shell.ct-shell-noauth .ct-topbar { display: none; }
+
+  .ct-menu-btn {
+    width: 40px; height: 40px; flex-shrink: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px;
+    border: 1px solid var(--line); border-radius: 8px; background: var(--surface);
+    cursor: pointer; padding: 0;
+  }
+  .ct-menu-btn:hover { border-color: var(--ink-soft); }
+  .ct-menu-btn span { display: block; width: 18px; height: 2px; border-radius: 2px; background: var(--ink); }
+  .ct-topbar-title {
+    display: flex; align-items: center; gap: 9px;
+    font-family: 'Fraunces', serif; font-weight: 600; font-size: 16px; letter-spacing: -0.01em;
+  }
+
+  /* A aba lateral vira uma gaveta que desliza da esquerda (visual igual ao do desktop) */
+  .ct-sidebar {
+    position: fixed; top: 0; left: 0; bottom: 0; z-index: 50;
+    width: min(280px, 84vw); height: 100%; height: 100dvh;
+    padding: 22px 14px; padding-top: calc(22px + env(safe-area-inset-top, 0px));
+    transform: translateX(-100%); visibility: hidden;
+    transition: transform .25s ease, visibility 0s linear .25s;
+  }
+  body.ct-menu-open .ct-sidebar {
+    transform: translateX(0); visibility: visible;
+    transition: transform .25s ease, visibility 0s;
+    box-shadow: 6px 0 24px rgba(43, 36, 25, .22);
+  }
+
+  /* Fundo escurecido atrás da gaveta: toque fora para fechar */
+  .ct-backdrop {
+    display: block; position: fixed; inset: 0; z-index: 40;
+    background: rgba(43, 36, 25, .45);
+    opacity: 0; pointer-events: none; transition: opacity .25s ease;
+  }
+  body.ct-menu-open .ct-backdrop { opacity: 1; pointer-events: auto; }
+  body.ct-menu-open { overflow: hidden; }
+
   .ct-content { padding: 18px 16px 40px; }
 }
 
@@ -198,3 +243,66 @@ body {
 .ct-theme-swatch input[type="color"] { -webkit-appearance: none; appearance: none; width: 100%; height: 44px; border: 1px solid var(--line); border-radius: 8px; padding: 3px; background: #fff; cursor: pointer; }
 .ct-theme-swatch input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; border-radius: 6px; }
 .ct-theme-swatch input[type="color"]::-webkit-color-swatch { border: none; border-radius: 6px; }
+
+/* ---------- Ajustes de layout para telas pequenas (tablet e celular) ---------- */
+
+/* Textos longos nunca estouram o card */
+.ct-card-name, .ct-roupa-tecido-name, .ct-molde-mat-top span, .ct-historico-row span { overflow-wrap: anywhere; }
+.ct-roupa-tecido-name, .ct-molde-mat-top > span:first-child { min-width: 0; }
+.ct-card-body img, .ct-molde-foto { max-width: 100%; }
+
+@media (max-width: 860px) {
+  /* iOS dá zoom automático em campos com fonte menor que 16px */
+  .ct-search, .ct-field input, .ct-field select, .ct-molde-mat-select, .ct-consumo-input { font-size: 16px; }
+
+  /* Itens do menu lateral maiores para o toque */
+  .ct-nav-item { padding: 13px 12px; font-size: 14.5px; }
+
+  /* Botões de ação (editar, excluir, +) com área de toque confortável */
+  .ct-icon-btn { width: 34px; height: 34px; font-size: 16px; }
+  .ct-historico-row .ct-icon-btn { width: 32px; height: 32px; font-size: 14px; }
+  .ct-chip { padding: 8px 14px; font-size: 13px; }
+  .ct-btn, .ct-google-btn { padding: 11px 18px; }
+
+  /* Busca ocupa a linha toda e o botão vai para baixo, em largura total */
+  .ct-toolbar .ct-search { flex-basis: 100%; }
+  .ct-toolbar .ct-btn { flex: 1; }
+
+  .ct-page-header h2, .ct-h1 { font-size: 21px; }
+  .ct-overlay { padding: 16px; }
+  .ct-form-actions { flex-wrap: wrap; }
+  .ct-form-actions .ct-btn { flex: 1; }
+
+  .ct-summary-bar { gap: 8px 16px; }
+  .ct-historico-panel { padding: 12px 14px; }
+  .ct-historico-row { flex-wrap: wrap; }
+
+  .ct-theme-grid { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
+}
+
+@media (max-width: 560px) {
+  .ct-content { padding: 14px 12px 36px; }
+
+  /* Cards ocupam a largura toda, um por linha */
+  .ct-grid { grid-template-columns: 1fr; }
+
+  /* Dashboard: indicadores em duas colunas, mais compactos */
+  .ct-stat-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  .ct-stat-card { padding: 12px 14px; }
+  .ct-stat-value { font-size: 17px; }
+  .ct-dash-section { padding: 14px 14px; }
+  .ct-bar-row { grid-template-columns: 84px 1fr 56px; gap: 8px; }
+
+  /* Formulário: campos lado a lado passam a ficar um embaixo do outro */
+  .ct-row2 { grid-template-columns: 1fr; gap: 0; }
+
+  /* Roupas: nome do tecido em cima, campo de consumo embaixo */
+  .ct-roupa-tecido-row { flex-direction: column; align-items: stretch; gap: 8px; }
+  .ct-consumo-col { flex-direction: row; align-items: center; justify-content: space-between; }
+  .ct-consumo-input { width: 110px; }
+
+  /* Moldes: material e disponibilidade quebram em duas linhas se precisar */
+  .ct-molde-mat-top { flex-wrap: wrap; row-gap: 2px; }
+
+  .ct-login-box { padding: 36px 8px; }
+}

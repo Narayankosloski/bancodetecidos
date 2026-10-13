@@ -1,13 +1,13 @@
 (function () {
   var firebaseConfig = {
-  apiKey: "AIzaSyB5HuNy4UcuFGAHubZS8b8aEo6pAhGPwNo",
-  authDomain: "bancodetecidos-511eb.firebaseapp.com",
-  projectId: "bancodetecidos-511eb",
-  storageBucket: "bancodetecidos-511eb.firebasestorage.app",
-  messagingSenderId: "207051802838",
-  appId: "1:207051802838:web:21ba8c9e38640fa1492177",
-  measurementId: "G-DX0HYP81XG"
-};
+    apiKey: "AIzaSyB5HuNy4UcuFGAHubZS8b8aEo6pAhGPwNo",
+    authDomain: "bancodetecidos-511eb.firebaseapp.com",
+    projectId: "bancodetecidos-511eb",
+    storageBucket: "bancodetecidos-511eb.firebasestorage.app",
+    messagingSenderId: "207051802838",
+    appId: "1:207051802838:web:21ba8c9e38640fa1492177",
+    measurementId: "G-DX0HYP81XG"
+  };
 
   firebase.initializeApp(firebaseConfig);
   var auth = firebase.auth();
@@ -225,20 +225,64 @@
         '<button class="ct-google-btn" id="ct-google-login">Entrar com Google</button>' +
       '</div>';
     var btn = document.getElementById('ct-google-login');
-    if (btn) btn.addEventListener('click', function () {
-      var provider = new firebase.auth.GoogleAuthProvider();
-      // signInWithPopup em vez de signInWithRedirect: o redirect depende de storage
-      // compartilhado entre o domínio do site e o authDomain (*.firebaseapp.com), e
-      // navegadores com bloqueio de storage de terceiros (Chrome sem cookies de
-      // terceiros, Safari, Brave, extensões de privacidade) descartam esse fluxo
-      // silenciosamente — sem erro no console, só "abre e fecha". O popup roda tudo
-      // na mesma janela e evita esse problema.
-      auth.signInWithPopup(provider).catch(function (err) {
-        console.error(err);
-        var root2 = document.getElementById('ct-root');
-        if (root2) root2.innerHTML += '<p class="ct-error" style="text-align:center">Não foi possível entrar (' + esc(err.code || err.message) + '). Tente novamente.</p>';
-      });
-    });
+    if (btn) btn.addEventListener('click', fazerLoginGoogle);
+  }
+
+  // ---------- Login com Google ----------
+  // No app instalado (Capacitor) o login abre a tela nativa de escolha de conta do
+  // Google, dentro do próprio app, sem sair para o navegador. O Google bloqueia o
+  // login por popup/redirect dentro de uma WebView (erro "disallowed_useragent"),
+  // por isso o app usa o plugin nativo. No site aberto pelo navegador, continua o
+  // popup normal.
+
+  function estaNoAppNativo() {
+    return !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+  }
+
+  function mostrarErroLogin(err) {
+    console.error(err);
+    var root = document.getElementById('ct-root');
+    if (!root) return;
+    var old = root.querySelector('.ct-login-error');
+    if (old) old.remove();
+    var p = document.createElement('p');
+    p.className = 'ct-error ct-login-error';
+    p.style.textAlign = 'center';
+    p.textContent = 'Não foi possível entrar (' + (err && (err.code || err.message) || 'erro desconhecido') + '). Tente novamente.';
+    root.appendChild(p);
+  }
+
+  function fazerLoginGoogle() {
+    if (estaNoAppNativo()) loginGoogleNativo();
+    else loginGoogleWeb();
+  }
+
+  function loginGoogleWeb() {
+    var provider = new firebase.auth.GoogleAuthProvider();
+    // signInWithPopup em vez de signInWithRedirect: o redirect depende de storage
+    // compartilhado entre o domínio do site e o authDomain (*.firebaseapp.com), e
+    // navegadores com bloqueio de storage de terceiros descartam esse fluxo
+    // silenciosamente. O popup roda tudo na mesma janela e evita esse problema.
+    auth.signInWithPopup(provider).catch(mostrarErroLogin);
+  }
+
+  // Usa o plugin @capacitor-firebase/authentication, que abre o seletor de conta do
+  // Google de verdade (fora da WebView) e devolve um idToken. Esse idToken vira uma
+  // credencial do Firebase JS SDK, então o resto do app (Firestore,
+  // onAuthStateChanged etc.) funciona exatamente igual.
+  function loginGoogleNativo() {
+    var plugins = window.Capacitor && window.Capacitor.Plugins;
+    var FirebaseAuthentication = plugins && plugins.FirebaseAuthentication;
+    if (!FirebaseAuthentication) {
+      mostrarErroLogin({ message: 'Plugin de login nativo não encontrado. Rode "npm i @capacitor-firebase/authentication" e "npx cap sync android".' });
+      return;
+    }
+    FirebaseAuthentication.signInWithGoogle({ skipNativeAuth: true }).then(function (result) {
+      var cred = result && result.credential;
+      var idToken = cred && cred.idToken;
+      if (!idToken) throw new Error('Não recebi o token de login do Google.');
+      return auth.signInWithCredential(firebase.auth.GoogleAuthProvider.credential(idToken, cred.accessToken || null));
+    }).catch(mostrarErroLogin);
   }
 
   auth.onAuthStateChanged(function (user) {
