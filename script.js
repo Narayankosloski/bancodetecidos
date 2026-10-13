@@ -20,7 +20,7 @@
     { color: '#5C6B4E', bg: '#E1E6DA' },
     { color: '#7C4A8A', bg: '#E9DDEC' }
   ];
-  var EMPTY_DRAFT = { nome: '', categoria: '', quantidade: '', valor: '', estoqueMinimo: '', marca: '', tipoModelo: '', tamanho: '', corEstampa: '' };
+  var EMPTY_DRAFT = { nome: '', categoria: '', quantidade: '', valor: '', estoqueMinimo: '', marca: '', tipoModelo: '', tamanho: '', corEstampa: '', foto: '' };
   var ESTOQUE_MINIMO_PADRAO = 0; // usado quando o tecido antigo não possui esse campo
 
   // Cores editáveis do site. Ficam salvas em usuarios/{uid}.tema e são aplicadas como
@@ -440,6 +440,75 @@
     if (catEl) state.draft.categoria = catEl.value;
   }
 
+  // ---------- Foto do tecido (galeria ou câmera) ----------
+  // A imagem é redimensionada e comprimida no próprio aparelho e guardada como texto
+  // (data URL) no documento do tecido, então não precisa do Firebase Storage.
+  var FOTO_MAX_LADO = 900;       // maior lado, em pixels
+  var FOTO_MAX_CHARS = 450000;   // limite de tamanho do texto da imagem (bem abaixo de 1 MB do Firestore)
+
+  function comprimirImagem(file) {
+    return new Promise(function (resolve, reject) {
+      if (!file || !/^image\//.test(file.type || '')) { reject(new Error('Escolha um arquivo de imagem.')); return; }
+      var url = URL.createObjectURL(file);
+      var img = new Image();
+      img.onload = function () {
+        URL.revokeObjectURL(url);
+        var w = img.naturalWidth, h = img.naturalHeight;
+        var escala = Math.min(1, FOTO_MAX_LADO / Math.max(w, h));
+        var cw = Math.max(1, Math.round(w * escala)), ch = Math.max(1, Math.round(h * escala));
+        var canvas = document.createElement('canvas');
+        canvas.width = cw; canvas.height = ch;
+        var ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(0, 0, cw, ch);
+        ctx.drawImage(img, 0, 0, cw, ch);
+        var q = 0.8;
+        var data = canvas.toDataURL('image/jpeg', q);
+        while (data.length > FOTO_MAX_CHARS && q > 0.4) { q -= 0.1; data = canvas.toDataURL('image/jpeg', q); }
+        if (data.length > FOTO_MAX_CHARS) reject(new Error('A foto é muito grande. Tente outra.'));
+        else resolve(data);
+      };
+      img.onerror = function () { URL.revokeObjectURL(url); reject(new Error('Não foi possível ler essa imagem.')); };
+      img.src = url;
+    });
+  }
+
+  function mostrarErroFoto(msg) {
+    var errEl = document.getElementById('ct-form-error');
+    if (errEl) errEl.textContent = msg;
+  }
+
+  function aplicarFoto(file) {
+    if (!file || !state.draft) return;
+    syncDraftFromDOM();
+    mostrarErroFoto('Processando foto...');
+    comprimirImagem(file).then(function (data) {
+      if (!state.draft) return;
+      state.draft.foto = data;
+      render();
+    }).catch(function (e) {
+      console.error('Erro ao processar foto', e);
+      mostrarErroFoto(e.message || 'Não foi possível usar essa foto.');
+    });
+  }
+
+  function removerFoto() {
+    syncDraftFromDOM();
+    if (state.draft) state.draft.foto = '';
+    render();
+  }
+
+  // Toque na foto do card: abre ampliada, toque de novo para fechar
+  function abrirFotoGrande(src) {
+    var box = document.createElement('div');
+    box.className = 'ct-lightbox';
+    var im = document.createElement('img');
+    im.src = src;
+    box.appendChild(im);
+    box.addEventListener('click', function () { box.remove(); });
+    document.body.appendChild(box);
+  }
+
   function openNewForm() {
     state.formOpen = true;
     state.editingId = null;
@@ -566,6 +635,10 @@
       nome: v.nome, categoria: v.categoria, quantidade: qtd, valor: valor, estoqueMinimo: estoqueMin,
       marca: v.marca, tipoModelo: v.tipoModelo, tamanho: v.tamanho, corEstampa: v.corEstampa
     };
+    // Foto (já reduzida/comprimida): grava junto no documento do tecido. Se estava
+    // editando e a foto foi removida, apaga o campo no Firestore.
+    if (v.foto) payload.foto = v.foto;
+    else if (state.editingId) payload.foto = firebase.firestore.FieldValue.delete();
 
     var promise;
     if (state.editingId) {
@@ -949,6 +1022,7 @@
       '<div class="ct-card">' +
       '<div class="ct-pinked" style="--tag-color:' + cc.color + '"></div>' +
       '<div class="ct-card-body">' +
+      (it.foto ? '<img class="ct-tecido-foto" data-foto-view="1" src="' + esc(it.foto) + '" alt="Foto de ' + esc(it.nome) + '" loading="lazy" />' : '') +
       '<div class="ct-card-top">' +
       '<div class="ct-card-name">' + esc(it.nome) + '</div>' +
       '<div class="ct-card-actions">' +
@@ -998,6 +1072,16 @@
     var html = '' +
       '<div class="ct-overlay">' +
       '<p class="ct-form-title">' + (state.editingId ? 'Editar item' : 'Novo item') + '</p>' +
+      '<div class="ct-field ct-foto-field"><label>Foto do tecido</label>' +
+      (v.foto ? '<img class="ct-foto-preview" src="' + esc(v.foto) + '" alt="Foto do tecido" />' : '<div class="ct-foto-vazio">Nenhuma foto</div>') +
+      '<div class="ct-foto-actions">' +
+      '<button type="button" class="ct-btn ct-btn-ghost" data-foto-pick="camera">&#128247; Tirar foto</button>' +
+      '<button type="button" class="ct-btn ct-btn-ghost" data-foto-pick="galeria">&#128444; Galeria</button>' +
+      (v.foto ? '<button type="button" class="ct-btn ct-btn-ghost" id="ct-foto-remove">Remover</button>' : '') +
+      '</div>' +
+      '<input type="file" id="ct-foto-camera" accept="image/*" capture="environment" hidden />' +
+      '<input type="file" id="ct-foto-galeria" accept="image/*" hidden />' +
+      '</div>' +
       '<div class="ct-field"><label>Nome *</label><input id="ct-f-nome" value="' + esc(v.nome) + '" placeholder="Tricoline Floral" /></div>' +
       '<div class="ct-field"><label>Categoria *</label>' + catField + '</div>' +
       '<div class="ct-row2">' +
@@ -1523,6 +1607,27 @@
     });
     var entradaInput = document.getElementById('ct-entrada-input');
     if (entradaInput) entradaInput.addEventListener('input', function (e) { state.entradaDraft = e.target.value; });
+
+    // ---- Foto do tecido ----
+    root.querySelectorAll('[data-foto-pick]').forEach(function (el) {
+      el.addEventListener('click', function () {
+        var input = document.getElementById('ct-foto-' + el.getAttribute('data-foto-pick'));
+        if (input) input.click();
+      });
+    });
+    ['ct-foto-camera', 'ct-foto-galeria'].forEach(function (id) {
+      var input = document.getElementById(id);
+      if (input) input.addEventListener('change', function (e) {
+        var f = e.target.files && e.target.files[0];
+        e.target.value = '';
+        aplicarFoto(f);
+      });
+    });
+    var fotoRemove = document.getElementById('ct-foto-remove');
+    if (fotoRemove) fotoRemove.addEventListener('click', removerFoto);
+    root.querySelectorAll('[data-foto-view]').forEach(function (el) {
+      el.addEventListener('click', function () { abrirFotoGrande(el.getAttribute('src')); });
+    });
 
     var submitBtn = document.getElementById('ct-submit-form');
     if (submitBtn) submitBtn.addEventListener('click', submitForm);
