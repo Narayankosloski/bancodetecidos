@@ -270,19 +270,41 @@
   // Google de verdade (fora da WebView) e devolve um idToken. Esse idToken vira uma
   // credencial do Firebase JS SDK, então o resto do app (Firestore,
   // onAuthStateChanged etc.) funciona exatamente igual.
+  // Quando o app carrega o site por server.url, o JS do plugin não vem junto, então o
+  // plugin nativo NÃO aparece em Capacitor.Plugins. A forma correta de usá-lo é pedir
+  // o proxy pelo registerPlugin, que se liga ao plugin instalado no APK.
+  var firebaseAuthPlugin = null;
+  function obterPluginLogin() {
+    if (firebaseAuthPlugin) return firebaseAuthPlugin;
+    var cap = window.Capacitor;
+    if (!cap) return null;
+    if (cap.Plugins && cap.Plugins.FirebaseAuthentication) {
+      firebaseAuthPlugin = cap.Plugins.FirebaseAuthentication;
+    } else if (typeof cap.registerPlugin === 'function') {
+      firebaseAuthPlugin = cap.registerPlugin('FirebaseAuthentication');
+    }
+    return firebaseAuthPlugin;
+  }
+
   function loginGoogleNativo() {
-    var plugins = window.Capacitor && window.Capacitor.Plugins;
-    var FirebaseAuthentication = plugins && plugins.FirebaseAuthentication;
-    if (!FirebaseAuthentication) {
-      mostrarErroLogin({ message: 'Plugin de login nativo não encontrado. Rode "npm i @capacitor-firebase/authentication" e "npx cap sync android".' });
+    var plugin = obterPluginLogin();
+    if (!plugin) {
+      mostrarErroLogin({ message: 'Capacitor não disponível neste app.' });
       return;
     }
-    FirebaseAuthentication.signInWithGoogle({ skipNativeAuth: true }).then(function (result) {
+    plugin.signInWithGoogle({ skipNativeAuth: true }).then(function (result) {
       var cred = result && result.credential;
       var idToken = cred && cred.idToken;
       if (!idToken) throw new Error('Não recebi o token de login do Google.');
       return auth.signInWithCredential(firebase.auth.GoogleAuthProvider.credential(idToken, cred.accessToken || null));
-    }).catch(mostrarErroLogin);
+    }).catch(function (err) {
+      var msg = String((err && (err.message || err.code)) || '');
+      // Plugin não está dentro do APK instalado
+      if (/not implemented|not available|UNIMPLEMENTED/i.test(msg)) {
+        err = { message: 'o plugin de login não está neste APK. Rode "npm i @capacitor-firebase/authentication", "npx cap sync android", "gradlew.bat clean" e gere o APK de novo' };
+      }
+      mostrarErroLogin(err);
+    });
   }
 
   auth.onAuthStateChanged(function (user) {
