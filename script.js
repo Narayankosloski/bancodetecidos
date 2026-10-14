@@ -223,6 +223,7 @@
         '<b>Entre para acessar seu catálogo</b>' +
         '<p>Cada conta Google tem seu próprio catálogo, salvo automaticamente.</p>' +
         '<button class="ct-google-btn" id="ct-google-login">Entrar com Google</button>' +
+        '<p style="margin-top:22px;font-size:11px;color:var(--ink-soft)">' + esc(diagnosticoApp()) + '</p>' +
       '</div>';
     var btn = document.getElementById('ct-google-login');
     if (btn) btn.addEventListener('click', fazerLoginGoogle);
@@ -234,6 +235,21 @@
   // login por popup/redirect dentro de uma WebView (erro "disallowed_useragent"),
   // por isso o app usa o plugin nativo. No site aberto pelo navegador, continua o
   // popup normal.
+
+  var VERSAO_SCRIPT = '20261014';
+
+  // Texto curto mostrado na tela de login: confirma qual script o app carregou e
+  // o que o Capacitor expõe (ajuda a achar o problema quando o login nativo falha).
+  function diagnosticoApp() {
+    var cap = window.Capacitor;
+    if (!cap) return 'v' + VERSAO_SCRIPT + ' · navegador (sem Capacitor)';
+    var plataforma = typeof cap.getPlatform === 'function' ? cap.getPlatform() : '?';
+    var nativo = typeof cap.isNativePlatform === 'function' ? cap.isNativePlatform() : '?';
+    return 'v' + VERSAO_SCRIPT + ' · plataforma: ' + plataforma + ' · nativo: ' + nativo +
+      ' · registerPlugin: ' + (typeof cap.registerPlugin === 'function' ? 'sim' : 'não') +
+      ' · nativePromise: ' + (typeof cap.nativePromise === 'function' ? 'sim' : 'não') +
+      ' · Plugins: [' + Object.keys(cap.Plugins || {}).join(', ') + ']';
+  }
 
   function estaNoAppNativo() {
     return !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
@@ -270,18 +286,25 @@
   // Google de verdade (fora da WebView) e devolve um idToken. Esse idToken vira uma
   // credencial do Firebase JS SDK, então o resto do app (Firestore,
   // onAuthStateChanged etc.) funciona exatamente igual.
-  // Quando o app carrega o site por server.url, o JS do plugin não vem junto, então o
-  // plugin nativo NÃO aparece em Capacitor.Plugins. A forma correta de usá-lo é pedir
-  // o proxy pelo registerPlugin, que se liga ao plugin instalado no APK.
+  // Como falar com o plugin nativo de login. O site é um JS puro (sem o @capacitor/core
+  // empacotado), então Capacitor.registerPlugin pode não existir. Tentamos, em ordem:
+  //  1) Capacitor.Plugins.FirebaseAuthentication
+  //  2) Capacitor.registerPlugin('FirebaseAuthentication')
+  //  3) a ponte nativa direta (Capacitor.nativePromise), que sempre existe dentro do app
   var firebaseAuthPlugin = null;
   function obterPluginLogin() {
     if (firebaseAuthPlugin) return firebaseAuthPlugin;
     var cap = window.Capacitor;
     if (!cap) return null;
-    if (cap.Plugins && cap.Plugins.FirebaseAuthentication) {
+    if (cap.Plugins && cap.Plugins.FirebaseAuthentication && typeof cap.Plugins.FirebaseAuthentication.signInWithGoogle === 'function') {
       firebaseAuthPlugin = cap.Plugins.FirebaseAuthentication;
     } else if (typeof cap.registerPlugin === 'function') {
-      firebaseAuthPlugin = cap.registerPlugin('FirebaseAuthentication');
+      try { firebaseAuthPlugin = cap.registerPlugin('FirebaseAuthentication'); } catch (e) { console.error(e); }
+    }
+    if (!firebaseAuthPlugin && typeof cap.nativePromise === 'function') {
+      firebaseAuthPlugin = {
+        signInWithGoogle: function (opts) { return cap.nativePromise('FirebaseAuthentication', 'signInWithGoogle', opts || {}); }
+      };
     }
     return firebaseAuthPlugin;
   }
@@ -289,7 +312,8 @@
   function loginGoogleNativo() {
     var plugin = obterPluginLogin();
     if (!plugin) {
-      mostrarErroLogin({ message: 'Capacitor não disponível neste app.' });
+      var cap = window.Capacitor || {};
+      mostrarErroLogin({ message: 'ponte nativa do Capacitor indisponível — ' + diagnosticoApp() });
       return;
     }
     plugin.signInWithGoogle({ skipNativeAuth: true }).then(function (result) {
@@ -298,10 +322,10 @@
       if (!idToken) throw new Error('Não recebi o token de login do Google.');
       return auth.signInWithCredential(firebase.auth.GoogleAuthProvider.credential(idToken, cred.accessToken || null));
     }).catch(function (err) {
-      var msg = String((err && (err.message || err.code)) || '');
+      var msg = String((err && (err.message || err.code)) || err || '');
       // Plugin não está dentro do APK instalado
-      if (/not implemented|not available|UNIMPLEMENTED/i.test(msg)) {
-        err = { message: 'o plugin de login não está neste APK. Rode "npm i @capacitor-firebase/authentication", "npx cap sync android", "gradlew.bat clean" e gere o APK de novo' };
+      if (/not implemented|not available|UNIMPLEMENTED|not found/i.test(msg)) {
+        err = { message: 'o plugin de login não está neste APK (' + msg + '). Rode "npx cap sync android", "gradlew.bat clean" e gere o APK de novo' };
       }
       mostrarErroLogin(err);
     });
