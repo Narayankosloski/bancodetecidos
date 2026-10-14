@@ -292,8 +292,15 @@
   //  2) Capacitor.registerPlugin('FirebaseAuthentication')
   //  3) a ponte nativa direta (Capacitor.nativePromise), que sempre existe dentro do app
   var firebaseAuthPlugin = null;
-  function obterPluginLogin() {
+    function obterPluginLogin() {
     if (firebaseAuthPlugin) return firebaseAuthPlugin;
+
+    // plugin empacotado no auth-bridge.bundle.js
+    if (window.FirebaseAuthentication) {
+      firebaseAuthPlugin = window.FirebaseAuthentication;
+      return firebaseAuthPlugin;
+    }
+
     var cap = window.Capacitor;
     if (!cap) return null;
     if (cap.Plugins && cap.Plugins.FirebaseAuthentication && typeof cap.Plugins.FirebaseAuthentication.signInWithGoogle === 'function') {
@@ -308,6 +315,7 @@
     }
     return firebaseAuthPlugin;
   }
+  
 
   function loginGoogleNativo() {
     var plugin = obterPluginLogin();
